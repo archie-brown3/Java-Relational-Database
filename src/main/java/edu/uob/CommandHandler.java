@@ -3,6 +3,8 @@ package edu.uob;
 import java.io.*;
 import java.util.ArrayList;
 
+
+// Parse Queries and execute them
 public class CommandHandler extends Table{
 
     void readAndSaveTable(File fileToOpen, String destination) throws IOException, FileNotFoundException {
@@ -17,7 +19,7 @@ public class CommandHandler extends Table{
         BufferedReader buffReader = new BufferedReader(reader);
         int rows = 0;
 
-        // TODO: refactor to only read files, move table constructor logic to seperate method
+        // TODO: refactor to only read files, move table constructor logic to separate method
         Table table = new Table();
         table.tableName = tableName;
         table.rows = new ArrayList<>();
@@ -25,10 +27,10 @@ public class CommandHandler extends Table{
         while ((currentLine = buffReader.readLine()) != null) {
             // Read labels from the first line only
             if (rows == 0) {
-                table.columnNames = currentLine.split("\t");
+                table.columnNames = parseRow(currentLine);
             } else {
                 // Read data from rows
-                String[] rowData = currentLine.split("\t");
+                String[] rowData = parseRow(currentLine);
                 int id = Integer.parseInt(rowData[0].trim());
                 if (table.existingIds.contains(id)) {
                     System.out.println("Duplicate id: " + id);
@@ -40,19 +42,9 @@ public class CommandHandler extends Table{
             }
             rows++;
         }
+        table.maxUsedId = table.getMaxUsedId();
         buffReader.close();
         return table;
-
-    }
-
-    // todo: update from basic array to more advanced data structure
-    public int generatePrimaryKey(Table table){
-        int maxUsedId = table.existingIds.stream().max(Integer::compareTo).get();
-        return maxUsedId + 1;
-    }
-
-    public void handleWrite(File fileToOpen) throws IOException, FileNotFoundException {
-        return;
     }
 
 
@@ -73,7 +65,6 @@ public class CommandHandler extends Table{
             }
             buffWriter.write("\n");
         }
-
         buffWriter.close();
     }
 
