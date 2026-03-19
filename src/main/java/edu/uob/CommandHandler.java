@@ -1,89 +1,89 @@
 package edu.uob;
 
 import java.io.*;
-import java.util.Arrays;
-import java.util.HashSet;
-import java.util.Set;
-import java.util.Vector;
+import java.util.ArrayList;
 
-public class CommandHandler {
+public class CommandHandler extends Table{
 
-    // Store all primary keys in table
-    private Set<Integer> existingIds = new HashSet<>();
+    void readAndSaveTable(File fileToOpen, String destination) throws IOException, FileNotFoundException {
+        saveTable(handleRead(fileToOpen), destination);
+    }
 
-    public void handleRead(File fileToOpen) throws IOException, FileNotFoundException {
-        existingIds.clear();
+    Table handleRead(File fileToOpen) throws IOException, FileNotFoundException {
+        String tableName = fileToOpen.getName().replaceFirst("\\.[^.]+$", "");
+        System.out.println("Reading table: " + tableName);
         String currentLine = " ";
-        // Read fileToOpen
         FileReader reader = new FileReader(fileToOpen);
         BufferedReader buffReader = new BufferedReader(reader);
-        String[] columns = null;
-        int lines = 0;
+        int rows = 0;
 
-        while ((currentLine = buffReader.readLine()) != null){
-            // Check 0th column = id
-            columns = currentLine.tsplit("\t");        // use tab char as delimiter
-            lines ++;
-                
+        // TODO: refactor to only read files, move table constructor logic to seperate method
+        Table table = new Table();
+        table.tableName = tableName;
+        table.rows = new ArrayList<>();
 
-            if (columns.length > 0){
-                // Collect primary ID's into set
-                try {
-                    int id = Integer.parseInt(columns[0].trim());
-                    if existingIds.contains(id){
-                        // Handle duplicate id
-                    }
+        while ((currentLine = buffReader.readLine()) != null) {
+            // Read labels from the first line only
+            if (rows == 0) {
+                table.columnNames = currentLine.split("\t");
+            } else {
+                // Read data from rows
+                String[] rowData = currentLine.split("\t");
+                int id = Integer.parseInt(rowData[0].trim());
+                if (table.existingIds.contains(id)) {
+                    System.out.println("Duplicate id: " + id);
+                    throw new IOException();
                 }
+                table.existingIds.add(id);
+                table.rows.add(rowData);
+                table.rowCount++;
+            }
+            rows++;
         }
-
-
-
-        if (columns.length != lines){
-            System.out.println("One or more entries are not formatted correctly");
-            throw new IOException();
-        }
-
-
-
-
-
         buffReader.close();
+        return table;
+
     }
 
-    public void handleWrite(File fileToOpen) throws IOException, FileNotFoundException{
-        // Get Primary key
     // todo: update from basic array to more advanced data structure
-    public boolean primaryKeyIsFree(int key, String[] table){
-        set
-        // Parse ID from string to int
-        String i = table[0].;
-
-
-        if (){
-            return true;
-        }
-
+    public int generatePrimaryKey(Table table){
+        int maxUsedId = table.existingIds.stream().max(Integer::compareTo).get();
+        return maxUsedId + 1;
     }
 
-    public int generatePrimaryKey(String[] table){
-        int key = table.length + 1;
-
-        if (!primaryKeyIsFree(key,table)){
-            // Handle exception
-        }
-        return key;
+    public void handleWrite(File fileToOpen) throws IOException, FileNotFoundException {
+        return;
     }
 
 
+    public void saveTable(Table table, String destination) throws IOException {
+        FileWriter writer = new FileWriter(destination + File.separator + table.tableName + ".tab");
+        BufferedWriter buffWriter = new BufferedWriter(writer);
+        System.out.println("Saving table: " + table.tableName);
+        // Write columnNames to the header
+        for (int i = 0; i < table.columnNames.length; i++) {
+            buffWriter.write(table.columnNames[i] + "\t");
+        }
+        // newline after header
+        buffWriter.write(table.columnNames[0] + "\n");
+        // write data to body
+        for (String[] row : table.rows) {
+            for (String cell : row) {
+                buffWriter.write(cell + "\t");
+            }
+            buffWriter.write("\n");
+        }
 
-    public void printTable(String[] table){
-        for (String cell: table){
+        buffWriter.close();
+    }
+
+
+    public void printRow(Table table) {
+        for (String cell : table.columnNames) {
             System.out.printf("%-15s", cell);
         }
         System.out.println("\n");
     }
-
-
 
 
 }

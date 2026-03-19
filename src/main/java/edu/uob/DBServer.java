@@ -43,8 +43,10 @@ public class DBServer {
         // TODO implement your server logic here
         edu.uob.CommandHandler commandHandler = new CommandHandler();
         String pathToFile = "src/test/java/edu/uob";
-        String name = pathToFile + File.separator + "people.tab";
+        String name = pathToFile + File.separator + "sheds.tab";
+        String destination = "databases";
         File fileToOpen = new File(name);
+
         // Parse command for Create, Insert, Select etc..
 
         // Read from File
@@ -66,6 +68,15 @@ public class DBServer {
                 System.out.println((e.getMessage()));
             } catch (IOException e){
                 System.out.println(e.getMessage());
+            }
+        }
+
+        if (Objects.equals(command, "save")){
+            try{
+                //TODO: seperate read and save methods in commandhandler
+                commandHandler.readAndSaveTable(fileToOpen, destination);
+            } catch (IOException e) {
+                throw new RuntimeException(e);
             }
         }
 
