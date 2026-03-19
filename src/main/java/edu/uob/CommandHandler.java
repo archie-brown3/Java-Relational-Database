@@ -22,7 +22,7 @@ public class CommandHandler {
 
         while ((currentLine = buffReader.readLine()) != null){
             // Check 0th column = id
-            columns = currentLine.split("\t");        // use tab char as delimiter
+            columns = currentLine.tsplit("\t");        // use tab char as delimiter
             lines ++;
                 
 
@@ -52,10 +52,6 @@ public class CommandHandler {
 
     public void handleWrite(File fileToOpen) throws IOException, FileNotFoundException{
         // Get Primary key
-        //
-    }
-
-
     // todo: update from basic array to more advanced data structure
     public boolean primaryKeyIsFree(int key, String[] table){
         set
