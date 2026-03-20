@@ -13,7 +13,7 @@ public class CommandHandler extends Table{
 
     Table handleRead(File fileToOpen) throws IOException, FileNotFoundException {
         String tableName = fileToOpen.getName().replaceFirst("\\.[^.]+$", "");
-        System.out.println("Reading table: " + tableName);
+        // System.out.println("Reading table: " + tableName);
         String currentLine = " ";
         FileReader reader = new FileReader(fileToOpen);
         BufferedReader buffReader = new BufferedReader(reader);
