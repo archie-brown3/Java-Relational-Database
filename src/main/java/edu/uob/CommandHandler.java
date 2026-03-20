@@ -20,14 +20,20 @@ public class CommandHandler extends Table{
         int rows = 0;
 
         // TODO: refactor to only read files, move table constructor logic to separate method
+        // TODO: parse headers to Column objects, save row data correctly to in data structure
         Table table = new Table();
         table.tableName = tableName;
         table.rows = new ArrayList<>();
 
         while ((currentLine = buffReader.readLine()) != null) {
-            // Read labels from the first line only
+            // Create a column object for the first line
             if (rows == 0) {
-                table.columnNames = parseRow(currentLine);
+                for (String columnName : parseRow(currentLine)) {
+                    // Parse column name
+                    Column col = new Column();
+                }
+
+
             } else {
                 // Read data from rows
                 String[] rowData = parseRow(currentLine);

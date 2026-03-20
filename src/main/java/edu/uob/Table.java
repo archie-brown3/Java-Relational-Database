@@ -6,12 +6,13 @@ import java.util.Set;
 
 // In memory data model representing single tables data and metadata
 public class Table {
+    String tableName;
+    List<Column> columns;
     public Set<Integer> existingIds = new HashSet<>();
     int maxUsedId;
-    String[] columnNames;
     List<String[]> rows;
     int rowCount;
-    String tableName;
+    int nextId = nextId(); // todo: move to constructor
 
     //todo: constructor method
 
@@ -19,8 +20,7 @@ public class Table {
 
     // todo: update from basic array to more advanced data structure
     public int getMaxUsedId() {
-        int maxUsedId = this.existingIds.stream().max(Integer::compareTo).get();
-        return maxUsedId;
+        return this.existingIds.stream().max(Integer::compareTo).get();
     }
 
     void insertRow(Table table, String[] row){
