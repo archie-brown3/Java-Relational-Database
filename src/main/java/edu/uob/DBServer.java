@@ -24,7 +24,7 @@ public class DBServer {
     public DBServer() {
         // all data stored inside of databases directory
         storageFolderPath = Paths.get("databases").toAbsolutePath().toString();
-        edu.uob.CommandHandler commandHandler = new CommandHandler();
+        QueryExecutor queryExecutor = new QueryExecutor();
         try {
             // Create the database storage folder if it doesn't already exist !
             Files.createDirectories(Paths.get(storageFolderPath));
@@ -41,18 +41,27 @@ public class DBServer {
     */
     public String handleCommand(String command) {
         // TODO implement your server logic here
-        edu.uob.CommandHandler commandHandler = new CommandHandler();
+        QueryExecutor queryExecutor = new QueryExecutor();
         String pathToFile = "src/test/java/edu/uob";
         String name = pathToFile + File.separator + "sheds.tab";
         String destination = "databases";
         File fileToOpen = new File(name);
+        Table table = QueryParser.
 
-        // Parse command for Create, Insert, Select etc..
+
+
+        QueryExecutor.QueryCommand cmd = (QueryExecutor.QueryCommand) QueryParser.parse(command); // todo: fix this
+        cmd.execute();     // todo: need to parse the table at some point!
+
+
+
+
+        // Todo: implement proper command parsing with BNF grammar
 
         // Read from File
-        if (Objects.equals(command, "read")) {
+        if (Objects.equals(command, "load")) {
             try {
-                commandHandler.handleRead(fileToOpen);
+                queryExecutor.load(fileToOpen);
             } catch (FileNotFoundException e) {
                 System.out.println(e.getMessage());
             } catch (IOException e) {
@@ -63,7 +72,7 @@ public class DBServer {
         // Write from file
         if (Objects.equals(command, "write")){
             try {
-                commandHandler.handleWrite(fileToOpen);
+                queryExecutor.handleWrite(fileToOpen);
             } catch (FileNotFoundException e){
                 System.out.println((e.getMessage()));
             } catch (IOException e){
@@ -74,7 +83,7 @@ public class DBServer {
         if (Objects.equals(command, "save")){
             try{
                 //TODO: seperate read and save methods in commandhandler
-                commandHandler.readAndSaveTable(fileToOpen, destination);
+                queryExecutor.readAndSaveTable(fileToOpen, destination);
             } catch (IOException e) {
                 throw new RuntimeException(e);
             }
