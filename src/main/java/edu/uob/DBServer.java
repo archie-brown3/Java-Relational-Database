@@ -1,17 +1,19 @@
 package edu.uob;
 
+import javax.sound.midi.SysexMessage;
 import java.io.*;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.file.Paths;
 import java.nio.file.Files;
-import java.util.Objects;
 
 /** This class implements the DB server. */
 public class DBServer {
 
     private static final char END_OF_TRANSMISSION = 4;
-    private String storageFolderPath;
+    private final String storageFolderPath;
+    private final QueryExecutor queryExecutor;
+    private final QueryExecutor.ExecutionContext executionContext;
 
     public static void main(String args[]) throws IOException {
         DBServer server = new DBServer();
@@ -24,7 +26,10 @@ public class DBServer {
     public DBServer() {
         // all data stored inside of databases directory
         storageFolderPath = Paths.get("databases").toAbsolutePath().toString();
-        QueryExecutor queryExecutor = new QueryExecutor();
+        queryExecutor = new QueryExecutor();
+        executionContext = new QueryExecutor.ExecutionContext(storageFolderPath);
+        System.out.println("Using storage folder path: " + storageFolderPath);
+
         try {
             // Create the database storage folder if it doesn't already exist !
             Files.createDirectories(Paths.get(storageFolderPath));
@@ -40,56 +45,17 @@ public class DBServer {
     * <p>This method handles all incoming DB commands and carries out the required actions.
     */
     public String handleCommand(String command) {
-        // TODO implement your server logic here
-        QueryExecutor queryExecutor = new QueryExecutor();
-        String pathToFile = "src/test/java/edu/uob";
-        String name = pathToFile + File.separator + "sheds.tab";
-        String destination = "databases";
-        File fileToOpen = new File(name);
-        Table table = QueryParser.
-
-
-
-        QueryExecutor.QueryCommand cmd = (QueryExecutor.QueryCommand) QueryParser.parse(command); // todo: fix this
-        cmd.execute();     // todo: need to parse the table at some point!
-
-
-
-
-        // Todo: implement proper command parsing with BNF grammar
-
-        // Read from File
-        if (Objects.equals(command, "load")) {
-            try {
-                queryExecutor.load(fileToOpen);
-            } catch (FileNotFoundException e) {
-                System.out.println(e.getMessage());
-            } catch (IOException e) {
-                System.out.println(e.getMessage());
-            }
+        // Boilerplate flow: parse SQL into a command object, then execute through visitor.
+        // TODO: Replace placeholder parser/executor logic with full BNF-conformant implementation.
+        try {
+            QueryParser.Command parsedCommand = QueryParser.parse(command);
+            return queryExecutor.execute(parsedCommand, executionContext);
+        } catch (IllegalArgumentException | UnsupportedOperationException e) {
+            return "[ERROR] " + e.getMessage();
+        } catch (Exception e) {
+            // Keep server robust per brief by trapping unexpected errors.
+            return "[ERROR] Unexpected server error: " + e.getMessage();
         }
-
-        // Write from file
-        if (Objects.equals(command, "write")){
-            try {
-                queryExecutor.handleWrite(fileToOpen);
-            } catch (FileNotFoundException e){
-                System.out.println((e.getMessage()));
-            } catch (IOException e){
-                System.out.println(e.getMessage());
-            }
-        }
-
-        if (Objects.equals(command, "save")){
-            try{
-                //TODO: seperate read and save methods in commandhandler
-                queryExecutor.readAndSaveTable(fileToOpen, destination);
-            } catch (IOException e) {
-                throw new RuntimeException(e);
-            }
-        }
-
-        return "";
     }
 
     //  === Methods below handle networking aspects of the project - you will not need to change these ! ===
