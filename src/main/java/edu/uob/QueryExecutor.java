@@ -5,6 +5,8 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Consumer;
+import java.util.function.Function;
 
 public class QueryExecutor {
 
@@ -93,14 +95,45 @@ public class QueryExecutor {
 
         @Override
         public String visit(QueryParser.DropDatabaseCommand command) {
-            // TODO: delete database folder recursively.
-            return notImplemented("DROP DATABASE");
+            // TODO: clean up code
+            String databaseName = command.databaseName();
+            String databaseFolderPath = context.getStorageFolderPath() + File.separator + databaseName;
+            File dir = new File(databaseFolderPath);
+            boolean deleted = removeDirectory(dir);
+            if(!new File(databaseFolderPath).exists()) { // todo: add error validation for !repo
+                return "[ERROR] Database " + databaseName + " does not exist";
+            }
+            else {
+                // Delete the database folder recursively
+                // check the folder !exists
+                if (new File(databaseFolderPath).exists()) {
+                    return("[ERROR] Database " + databaseName + " Could not be deleted");
+                }
+                return "[OK] Deleted " + databaseName + " in " + databaseFolderPath;
+            }
         }
+        public Boolean removeDirectory(File file){
+            if (file.isDirectory()) {
+                File[] files = file.listFiles();
+                for (File f : files) {
+                    removeDirectory(f);
+                }
+            }
+            return file.delete();
+        }
+
+
 
         @Override
         public String visit(QueryParser.DropTableCommand command) {
             // TODO: delete table .tab file from current database.
-            return notImplemented("DROP TABLE");
+            File file = new File(context.getStorageFolderPath() + File.separator +
+                    context.getCurrentDatabase() + File.separator + command.tableName() + ".tab");
+            file.delete();
+            if(!file.exists()) {
+                return "[OK] Deleted " + command.tableName() + " in " + context.getCurrentDatabase();
+            }
+            return "File " + command.tableName() + " could not be deleted"; //todo: add error handling
         }
 
         @Override
@@ -137,6 +170,59 @@ public class QueryExecutor {
         public String visit(QueryParser.JoinCommand command) {
             // TODO: implement inner join output format from coursework brief.
             return notImplemented("JOIN");
+        }
+
+        private String withTableRead(String tableName, Function<Table, String> action) {
+            // Helper wrapper for read-only commands (e.g. SELECT).
+            // Steps to implement:
+            // 1) Resolve and validate table file using resolveTableFile(tableName).
+            File tableFile = resolveTableFile(tableName);
+            // 2) Load the table into memory via executor.load(...).
+            // 3) Execute the supplied read action and return its formatted response.
+            // 4) Map IO/validation failures to a single [ERROR] response format.
+            throw new UnsupportedOperationException("TODO: implement withTableRead helper");
+        }
+
+        private String withTableWrite(String tableName, Consumer<Table> action) {
+            // Helper wrapper for mutating commands (e.g. INSERT/UPDATE/DELETE/ALTER).
+            // Steps to implement:
+            // 1) Resolve and validate table file using resolveTableFile(tableName).
+            if (resolveTableFile(tableName) != null) {
+
+            }
+            // 2) Load current table state via executor.load(...).
+            // 3) Apply mutation action against in-memory Table API.
+            // 4) Persist changes via executor.saveTable(...).
+            // 5) Return [OK] on success, [ERROR] on failure.
+            throw new UnsupportedOperationException("TODO: implement withTableWrite helper");
+        }
+
+        private File resolveTableFile(String tableName) {
+            // Centralized table path resolver.
+            // Steps to implement:
+            // 1) Validate a database is selected in ExecutionContext.
+            String currentDb = executor.normaliseDatabaseName(context.getCurrentDatabase());
+            // 2) Build path: <storageRoot>/<currentDatabase>/<tableName>.tab.
+
+            // 3) Validate the path exists and is a regular file.
+            if (currentDb == null) {
+                return null; //todo: error handling
+            }
+            // 4) Return the File object for downstream load/save operations.
+            return new File(context.getStorageFolderPath() + File.separator + currentDb + File.separator + tableName + ".tab");
+        }
+
+        private String requireCurrentDatabase() {
+            // Validation helper for commands that require USE to be set.
+            // Steps to implement:
+            // 1) Read current database from context.
+            String currentDb = executor.normaliseDatabaseName(context.getCurrentDatabase());
+            // 2) Reject null/blank with a clear IllegalArgumentException message.
+            if (currentDb == null) {
+                throw new IllegalArgumentException("Database is not selected. Use a database first.");
+            }
+            // 3) Return normalized database name for path construction.
+            return currentDb;
         }
 
         private String notImplemented(String commandName) {
@@ -198,11 +284,6 @@ public class QueryExecutor {
     public void saveTable(Table table, String destination) throws IOException {
         FileWriter writer = new FileWriter(destination + File.separator + table.getName() + ".tab");
         BufferedWriter buffWriter = new BufferedWriter(writer);
-
-        ////////  DEBUG ///////////
-        System.out.println("Saving table: " + table.getName());
-        ////////       ///////////
-
         List<String> columns = table.getColumnNames();
         // Write columnNames to the header
         for (int i = 0; i < columns.size(); i++) {
@@ -218,6 +299,7 @@ public class QueryExecutor {
         }
         buffWriter.close();
     }
+
     ///  I/O / Debug Helpers ///
 
     public void printTable(Table table) {
@@ -233,6 +315,12 @@ public class QueryExecutor {
             System.out.println(String.join("\t", rowData));
         }
     }
+
+    public String normaliseDatabaseName(String databaseName) {
+        return databaseName.toLowerCase();
+    }
+
+
 
 
     ///  I/O / Debug Helpers ///

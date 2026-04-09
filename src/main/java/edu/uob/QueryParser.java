@@ -259,23 +259,24 @@ public class QueryParser {
 
     private static Command parseDrop(String command) {
         // TODO: Route between DROP DATABASE and DROP TABLE forms.
-        String restDatabase = command.substring("DROP TABLE".length()).trim();
-        String restTable = command.substring("DROP DATABASE".length()).trim();
-        if (restDatabase.isEmpty() && restTable.isEmpty()) {
-            throw new IllegalArgumentException("Table name is required for DROP TABLE");
+        // Two stage parse
+        // Validate and route first two keywords:
+        String normalised = command.trim().toUpperCase();
+        String[] parts = normalised.split("\\s+");
+        if (parts.length < 2) {
+            throw new IllegalArgumentException("Invalid DROP syntax. Expected: DROP TABLE <name> or DROP DATABASE <name>");
         }
-        
-        // check if command is a database drop command
-        if (restDatabase.contains("DATABASE")) {
-            String databaseName = validateIdentifier(restDatabase.substring(0, restDatabase.indexOf(' ')).trim(), "database");
-            return new DropDatabaseCommand(databaseName);
+        if (!parts[0].equalsIgnoreCase("DROP")) {
+            throw new IllegalArgumentException("Invalid DROP syntax");
         }
-        else if (restTable.contains("TABLE")) {
-            String tableName = validateIdentifier(restTable.substring(0, restTable.indexOf(' ')).trim(), "table");
-            return new DropTableCommand(tableName);
-        }
+        String targetType = parts[1];
+        String targetName = validateIdentifier(parts[2], targetType.equals("TABLE") ? "table" : "database");
 
-        throw new UnsupportedOperationException("TODO: implement DROP parsing");
+        return switch (targetType){
+            case "DATABASE" -> new DropDatabaseCommand(targetName);
+            case "TABLE" -> new DropTableCommand(targetName);
+            default -> throw new IllegalArgumentException("Invalid DROP syntax");
+        };
     }
 
     private static Command parseAlter(String command) {
