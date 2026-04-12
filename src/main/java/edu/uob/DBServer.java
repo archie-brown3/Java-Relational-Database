@@ -42,10 +42,10 @@ public class DBServer {
     * KEEP this signature (i.e. {@code edu.uob.DBServer.handleCommand(String)}) otherwise we won't be
     * able to mark your submission correctly.
     *
-    * <p>This method handles all incoming DB commands and carries out the required actions.
+    * This method handles all incoming DB commands and carries out the required actions.
     */
     public String handleCommand(String command) {
-        // Boilerplate flow: parse SQL into a command object, then execute through visitor.
+        // parse SQL into a command object, then execute through visitor.
         // TODO: Replace placeholder parser/executor logic with full BNF-conformant implementation.
         try {
             QueryParser.Command parsedCommand = QueryParser.parse(command);

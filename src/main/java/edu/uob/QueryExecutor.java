@@ -6,7 +6,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
-import java.util.function.Function;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class QueryExecutor {
 
@@ -58,11 +59,10 @@ public class QueryExecutor {
                 return "[ERROR] Database does not exist";
             }
             else{
-                System.out.println("Using database: " + databaseName + " in " + databaseFolderPath);
+                context.setCurrentDatabase(databaseName);
+                return "[OK]";
             }
-
             // TODO: validate database exists in storage, then set active database.
-            return notImplemented("USE");
         }
 
         @Override
@@ -90,6 +90,7 @@ public class QueryExecutor {
         @Override
         public String visit(QueryParser.CreateTableCommand command) {
             // TODO: create new .tab file with id + attributes header.
+            // new File
             return notImplemented("CREATE TABLE");
         }
 
@@ -127,13 +128,16 @@ public class QueryExecutor {
         @Override
         public String visit(QueryParser.DropTableCommand command) {
             // TODO: delete table .tab file from current database.
-            File file = new File(context.getStorageFolderPath() + File.separator +
-                    context.getCurrentDatabase() + File.separator + command.tableName() + ".tab");
-            file.delete();
-            if(!file.exists()) {
-                return "[OK] Deleted " + command.tableName() + " in " + context.getCurrentDatabase();
+            File file = resolveTableFile(command.tableName());
+            try {
+                boolean deleted = file.delete();
+                if (!deleted) {
+                    return "[ERROR] File " + command.tableName() + " could not be deleted"; //todo: add error handling
+                }
+                return "[0K] Table " + command.tableName() + " deleted successfully";
+            } catch (IllegalArgumentException e){
+                return "[ERROR]" + e.getMessage() ;
             }
-            return "File " + command.tableName() + " could not be deleted"; //todo: add error handling
         }
 
         @Override
@@ -145,13 +149,91 @@ public class QueryExecutor {
         @Override
         public String visit(QueryParser.InsertCommand command) {
             // TODO: load table, append row with generated id, persist file.
-            return notImplemented("INSERT");
+            // Verify the table exists
+            Table table;
+            try {
+                File tableFile = resolveTableFile(command.tableName());
+                if (!tableFile.exists() || !tableFile.isFile()) {
+                    return "[ERROR] Table " + command.tableName() + " does not exist";
+                }
+                table = executor.load(tableFile);
+            } catch (IllegalArgumentException e) {
+                return "[ERROR] " + e.getMessage();
+            } catch (IOException e) {
+                return "[ERROR] Could not read table " + command.tableName();
+            }
+
+            table.insertRow()
         }
 
         @Override
         public String visit(QueryParser.SelectCommand command) {
-            // TODO: load table, filter rows by condition, format result text.
-            return notImplemented("SELECT");
+            Table table;
+            try {
+                File tableFile = resolveTableFile(command.tableName());
+                if (!tableFile.exists() || !tableFile.isFile()) {
+                    return "[ERROR] Table " + command.tableName() + " does not exist";
+                }
+                table = executor.load(tableFile);
+            } catch (IllegalArgumentException e) {
+                return "[ERROR] " + e.getMessage();
+            } catch (IOException e) {
+                return "[ERROR] Could not read table " + command.tableName();
+            }
+
+            // Step 1: Decide which columns to output.
+            List<String> requested = command.selectedAttributes();
+            List<String> allColumns = table.getColumnNames();
+            List<String> projection = new ArrayList<>();
+
+            if (requested.contains("*")) {
+                // Keep SELECT * simple: reject mixed wildcard + explicit columns.
+                if (requested.size() != 1) {
+                    return "[ERROR] '*' cannot be mixed with named columns";
+                }
+                projection.addAll(allColumns);
+            } else {
+                for (String requestedColumn : requested) {
+                    String actualColumn = findColumnNameIgnoreCase(allColumns, requestedColumn);
+                    if (actualColumn == null) {
+                        return "[ERROR] Unknown column '" + requestedColumn + "'";
+                    }
+                    projection.add(actualColumn);
+                }
+            }
+
+            // Step 2: Build header and then append matching rows.
+            StringBuilder response = new StringBuilder();
+            response.append("[OK]");
+            response.append(System.lineSeparator());
+            response.append(String.join("\t", projection));
+
+            for (Row row : table.getAllRows()) {
+                boolean includeRow;
+                try {
+                    includeRow = matchesRawCondition(table, row, command.rawCondition());
+                } catch (IllegalArgumentException e) {
+                    return "[ERROR] " + e.getMessage();
+                }
+
+                if (!includeRow) {
+                    continue;
+                }
+
+                List<String> selectedValues = new ArrayList<>();
+                for (String columnName : projection) {
+                    if (columnName.equalsIgnoreCase("id")) {
+                        selectedValues.add(String.valueOf(row.getId()));
+                    } else {
+                        selectedValues.add(row.get(columnName));
+                    }
+                }
+
+                response.append(System.lineSeparator());
+                response.append(String.join("\t", selectedValues));
+            }
+
+            return response.toString();
         }
 
         @Override
@@ -172,17 +254,6 @@ public class QueryExecutor {
             return notImplemented("JOIN");
         }
 
-        private String withTableRead(String tableName, Function<Table, String> action) {
-            // Helper wrapper for read-only commands (e.g. SELECT).
-            // Steps to implement:
-            // 1) Resolve and validate table file using resolveTableFile(tableName).
-            File tableFile = resolveTableFile(tableName);
-            // 2) Load the table into memory via executor.load(...).
-            // 3) Execute the supplied read action and return its formatted response.
-            // 4) Map IO/validation failures to a single [ERROR] response format.
-            throw new UnsupportedOperationException("TODO: implement withTableRead helper");
-        }
-
         private String withTableWrite(String tableName, Consumer<Table> action) {
             // Helper wrapper for mutating commands (e.g. INSERT/UPDATE/DELETE/ALTER).
             // Steps to implement:
@@ -201,14 +272,10 @@ public class QueryExecutor {
             // Centralized table path resolver.
             // Steps to implement:
             // 1) Validate a database is selected in ExecutionContext.
-            String currentDb = executor.normaliseDatabaseName(context.getCurrentDatabase());
+            String currentDb = requireCurrentDatabase();
             // 2) Build path: <storageRoot>/<currentDatabase>/<tableName>.tab.
 
-            // 3) Validate the path exists and is a regular file.
-            if (currentDb == null) {
-                return null; //todo: error handling
-            }
-            // 4) Return the File object for downstream load/save operations.
+            // 3) Return the File object for downstream load/save operations.
             return new File(context.getStorageFolderPath() + File.separator + currentDb + File.separator + tableName + ".tab");
         }
 
@@ -216,17 +283,133 @@ public class QueryExecutor {
             // Validation helper for commands that require USE to be set.
             // Steps to implement:
             // 1) Read current database from context.
-            String currentDb = executor.normaliseDatabaseName(context.getCurrentDatabase());
+            String currentDb = context.getCurrentDatabase();
             // 2) Reject null/blank with a clear IllegalArgumentException message.
-            if (currentDb == null) {
+            if (currentDb == null || currentDb.isBlank()) {
                 throw new IllegalArgumentException("Database is not selected. Use a database first.");
             }
             // 3) Return normalized database name for path construction.
-            return currentDb;
+            return executor.normaliseDatabaseName(currentDb);
         }
 
         private String notImplemented(String commandName) {
             return "[ERROR] " + commandName + " execution not implemented yet";
+        }
+
+        private String findColumnNameIgnoreCase(List<String> columnNames, String targetColumn) {
+            for (String columnName : columnNames) {
+                if (columnName.equalsIgnoreCase(targetColumn)) {
+                    return columnName;
+                }
+            }
+            return null;
+        }
+
+        private boolean matchesRawCondition(Table table, Row row, String rawCondition) {
+            if (rawCondition == null || rawCondition.isBlank()) {
+                return true;
+            }
+
+            String condition = rawCondition.trim();
+
+            String[] orParts = condition.split("(?i)\\s+OR\\s+");
+            if (orParts.length > 1) {
+                for (String part : orParts) {
+                    if (matchesRawCondition(table, row, part)) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+
+            String[] andParts = condition.split("(?i)\\s+AND\\s+");
+            if (andParts.length > 1) {
+                for (String part : andParts) {
+                    if (!matchesRawCondition(table, row, part)) {
+                        return false;
+                    }
+                }
+                return true;
+            }
+
+            return evaluateSingleCondition(table, row, condition);
+        }
+
+        private boolean evaluateSingleCondition(Table table, Row row, String condition) {
+            Pattern pattern = Pattern.compile("^([A-Za-z0-9]+)\\s*(==|!=|>=|<=|>|<|(?i:LIKE))\\s*(.+)$");
+            Matcher matcher = pattern.matcher(condition.trim());
+            if (!matcher.matches()) {
+                throw new IllegalArgumentException("Unsupported WHERE condition: " + condition);
+            }
+
+            String requestedColumn = matcher.group(1);
+            String operator = matcher.group(2).toUpperCase();
+            String rightRaw = stripMatchingQuotes(matcher.group(3).trim());
+
+            String columnName = findColumnNameIgnoreCase(table.getColumnNames(), requestedColumn);
+            if (columnName == null) {
+                throw new IllegalArgumentException("Unknown column in WHERE: " + requestedColumn);
+            }
+
+            String leftValue;
+            if (columnName.equalsIgnoreCase("id")) {
+                leftValue = String.valueOf(row.getId());
+            } else {
+                leftValue = row.get(columnName);
+            }
+
+            if (leftValue == null) {
+                leftValue = "";
+            }
+
+            return compareValues(leftValue, operator, rightRaw);
+        }
+
+        private boolean compareValues(String leftValue, String operator, String rightValue) {
+            Double leftNumber = tryParseDouble(leftValue);
+            Double rightNumber = tryParseDouble(rightValue);
+
+            if (leftNumber != null && rightNumber != null) {
+                return switch (operator) {
+                    case "==" -> leftNumber.equals(rightNumber);
+                    case "!=" -> !leftNumber.equals(rightNumber);
+                    case ">" -> leftNumber > rightNumber;
+                    case "<" -> leftNumber < rightNumber;
+                    case ">=" -> leftNumber >= rightNumber;
+                    case "<=" -> leftNumber <= rightNumber;
+                    default -> throw new IllegalArgumentException("Unsupported operator: " + operator);
+                };
+            }
+
+            if ("LIKE".equals(operator)) {
+                String regex = rightValue.replace("%", ".*");
+                return leftValue.matches(regex);
+            }
+
+            return switch (operator) {
+                case "==" -> leftValue.equals(rightValue);
+                case "!=" -> !leftValue.equals(rightValue);
+                default -> throw new IllegalArgumentException("Unsupported operator for text values: " + operator);
+            };
+        }
+
+        private Double tryParseDouble(String value) {
+            try {
+                return Double.parseDouble(value);
+            } catch (NumberFormatException e) {
+                return null;
+            }
+        }
+
+        private String stripMatchingQuotes(String value) {
+            if (value.length() >= 2) {
+                boolean singleQuoted = value.startsWith("'") && value.endsWith("'");
+                boolean doubleQuoted = value.startsWith("\"") && value.endsWith("\"");
+                if (singleQuoted || doubleQuoted) {
+                    return value.substring(1, value.length() - 1);
+                }
+            }
+            return value;
         }
     }
 
@@ -236,6 +419,7 @@ public class QueryExecutor {
 
     // Load table from file
     Table load(File fileToOpen) throws IOException, FileNotFoundException {
+        // used to load a table from a file into memory
         String name  = fileToOpen.getName().replaceFirst("\\.[^.]+$", "");
         System.out.println("Reading table: " + name );
         String currentLine = " ";
@@ -244,8 +428,6 @@ public class QueryExecutor {
         BufferedReader buffReader = new BufferedReader(reader);
         int rows = 0;
         Table table = new Table(name , new ArrayList<>()); // initialise with name and empty schema
-
-
         // Parse columns
         while ((currentLine = buffReader.readLine()) != null) {
             if (rows == 0) {
@@ -262,7 +444,6 @@ public class QueryExecutor {
                 for (int i = 0; i < rowData.length; i++) {
                     // Add column name, value pair to row
                     row.put(columnNames[i], rowData[i]);
-
                 }
                 table.insertRow(row);
             }
@@ -271,7 +452,6 @@ public class QueryExecutor {
         buffReader.close();
         printTable(table);
         return table;
-
     }
 
     public void handleWrite(File fileToOpen) throws IOException, FileNotFoundException {
@@ -317,6 +497,9 @@ public class QueryExecutor {
     }
 
     public String normaliseDatabaseName(String databaseName) {
+        if (databaseName == null) {
+            return null;
+        }
         return databaseName.toLowerCase();
     }
 

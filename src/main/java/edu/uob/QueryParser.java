@@ -286,13 +286,86 @@ public class QueryParser {
 
     private static Command parseInsert(String command) {
         // TODO: Parse INSERT INTO [TableName] VALUES(...).
-        // TODO: Preserve quoted strings and embedded whitespace.
-        throw new UnsupportedOperationException("TODO: implement INSERT parsing");
+        // Syntax = INSERT INTO tableName VALUES(value1, value2, value3)
+        String trimmed = normaliseCommand(command);
+        // Validate command structure
+        if (!trimmed.startsWith("INSERT INTO ")) {
+            throw new IllegalArgumentException("Invalid INSERT syntax. Expected: INSERT INTO <table> VALUES(...)");
+        }
+        int valuesIndex = trimmed.indexOf(" VALUES(");
+        if (valuesIndex < 0) {
+            throw new IllegalArgumentException("Invalid INSERT syntax. Missing VALUES clause");
+        }
+        String tableName = trimmed.substring("INSERT INTO ".length(), valuesIndex).trim();
+        if (tableName.isEmpty()) {
+            throw new IllegalArgumentException("Table name is required after INSERT INTO");
+        }
+        String valuesRaw = trimmed.substring(valuesIndex + " VALUES(".length(), trimmed.length() - 1).trim();
+        if (valuesRaw.isEmpty()) {
+            throw new IllegalArgumentException("INSERT VALUES clause must contain at least one value");
+        }
+
+        // Build the list of values
+        List<String> values = valuesRaw.split("s");
+        // Validate values
+        for (String value : values) {
+            String trimmedValue = value.trim();
+
+        }
+        return new InsertCommand(tableName, values);
+
+
     }
 
     private static Command parseSelect(String command) {
         // TODO: Parse SELECT <WildAttribList> FROM [TableName] [WHERE <Condition>].
-        throw new UnsupportedOperationException("TODO: implement SELECT parsing");
+
+        String trimmed = command.trim();
+        String upper = trimmed.toUpperCase();
+        if (!upper.startsWith("SELECT ")) {
+            throw new IllegalArgumentException("Invalid SELECT syntax. Expected: SELECT <attributes> FROM <table> [WHERE <condition>]");
+        }
+
+        int fromIndex = upper.indexOf(" FROM ");
+        if (fromIndex < 0) {
+            throw new IllegalArgumentException("Invalid SELECT syntax. Missing FROM clause");
+        }
+
+        String selectorRaw = trimmed.substring("SELECT ".length(), fromIndex).trim();
+        if (selectorRaw.isEmpty()) {
+            throw new IllegalArgumentException("SELECT must specify '*' or at least one attribute");
+        }
+
+        List<String> selectedAttributes;
+        if (selectorRaw.equals("*")) {
+            selectedAttributes = List.of("*");
+        } else {
+            selectedAttributes = parseAttributeList(selectorRaw);
+        }
+
+        String fromTail = trimmed.substring(fromIndex + " FROM ".length()).trim();
+        if (fromTail.isEmpty()) {
+            throw new IllegalArgumentException("Invalid SELECT syntax. Table name is required after FROM");
+        }
+
+        String fromTailUpper = fromTail.toUpperCase();
+        int whereIndex = fromTailUpper.indexOf(" WHERE ");
+
+        String tableNameRaw;
+        String rawCondition = null;
+
+        if (whereIndex < 0) {
+            tableNameRaw = fromTail;
+        } else {
+            tableNameRaw = fromTail.substring(0, whereIndex).trim();
+            rawCondition = fromTail.substring(whereIndex + " WHERE ".length()).trim();
+            if (rawCondition.isEmpty()) {
+                throw new IllegalArgumentException("Invalid SELECT syntax. WHERE clause requires a condition");
+            }
+        }
+
+        String tableName = validateIdentifier(tableNameRaw, "table");
+        return new SelectCommand(selectedAttributes, tableName, rawCondition);
     }
 
     private static Command parseUpdate(String command) {
@@ -308,5 +381,8 @@ public class QueryParser {
     private static Command parseJoin(String command) {
         // TODO: Parse JOIN [TableName] AND [TableName] ON [AttributeName] AND [AttributeName].
         throw new UnsupportedOperationException("TODO: implement JOIN parsing");
+    }
+    private static String normaliseCommand(String command) {
+        return command.trim().toUpperCase();
     }
 }
