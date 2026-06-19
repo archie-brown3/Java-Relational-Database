@@ -121,7 +121,7 @@ Bob	74
 ## Project Structure
 
 ```
-src/main/java/edu/uob/
+src/main/java/db/engine/
 ├── DBServer.java       # TCP server, entry point
 ├── DBClient.java       # TCP client, REPL interface
 ├── QueryParser.java    # BNF-based SQL parser → Command records
@@ -131,10 +131,11 @@ src/main/java/edu/uob/
 ├── Column.java         # Column metadata (name, type, FK refs)
 └── grammar.md          # BNF grammar specification
 
-src/test/java/edu/uob/
-├── ExampleDBTests.java # Integration tests
-├── people.tab          # Test fixture
-└── sheds.tab           # Test fixture (JOIN data)
+src/test/java/db/engine/
+├── ExampleDBTests.java       # Integration tests
+├── ComprehensiveDBTests.java # Full command coverage
+├── people.tab                # Test fixture
+└── sheds.tab                 # Test fixture (JOIN data)
 ```
 
 ## Response Protocol
@@ -146,7 +147,6 @@ Every command returns either `[OK]` or `[ERROR]` on the first line. Query result
 - No index structures — queries are O(n) table scans
 - Single-user: one connection at a time
 - Integer IDs are monotonic (no reuse after deletes)
-- SQL dialect is deliberately minimal (coursework scope)
 - No nested WHERE parenthesization (AND/OR are left-associative)
 - JOIN only supports single-column inner joins
 
@@ -155,7 +155,3 @@ Every command returns either `[OK]` or `[ERROR]` on the first line. Query result
 - **Separate parse from execute early.** Adding the visitor pattern mid-development was the right call — it eliminated parser-executor coupling and made testing trivial.
 - **Sealed types > enums for commands.** Each command carries different fields (table name, values list, condition string). Sealed records give type safety without forcing everything into a single shape.
 - **File-based persistence is surprisingly robust for single-user workloads.** TSV is human-readable, diffable, and trivial to debug. The trade-off is write amplification on every mutation.
-
----
-
-*Built as coursework for the University of Bristol MSc Computer Science programme.*

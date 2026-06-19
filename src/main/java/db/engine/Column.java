@@ -1,4 +1,4 @@
-package edu.uob;
+package db.engine;
 
 public record Column(String name, DataType type, String referenceTable, String referenceColumn ) {
 
