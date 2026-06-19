@@ -54,64 +54,86 @@ public class QueryExecutor {
         @Override
         public String visit(QueryParser.UseCommand command) {
             String databaseName = command.databaseName();
-            String databaseFolderPath = context.getStorageFolderPath() + File.separator + databaseName; // todo: change to file (table)
-            if(!new File(databaseFolderPath).exists()) {
+            String databaseFolderPath = context.getStorageFolderPath() + File.separator + databaseName;
+            if (!new File(databaseFolderPath).exists()) {
                 return "[ERROR] Database does not exist";
             }
-            else{
-                context.setCurrentDatabase(databaseName);
-                return "[OK]";
-            }
-            // TODO: validate database exists in storage, then set active database.
+            context.setCurrentDatabase(databaseName);
+            return "[OK]";
         }
 
         @Override
         public String visit(QueryParser.CreateDatabaseCommand command) {
-            // TODO: create database folder (lowercase), reject existing names.
-            // Get database name + normalise to lowercase
+            // Create database folder (lowercase), reject existing names.
             String databaseName = command.databaseName().toLowerCase();
             String databaseFolderPath = context.getStorageFolderPath() + File.separator + databaseName;
-            if(new File(databaseFolderPath).exists()) {
+            File databaseFolder = new File(databaseFolderPath);
+
+            if (databaseFolder.exists()) {
                 return "[ERROR] Database already exists";
             }
-            else{ // else create new folder
-                System.out.println("Creating database: " + databaseName + " in " + databaseFolderPath); //todo: change to mkdirs if parent doesn't exist
-                new File(databaseFolderPath).mkdir();
-                context.setCurrentDatabase(databaseName);
-                // check that the database folder was created
-                if(!new File(databaseFolderPath).exists()) {
-                    return "[ERROR] Database could not be created";
-                } else {
-                    return "Database created successfully";
-                }
+
+            if (!databaseFolder.mkdir()) {
+                return "[ERROR] Database could not be created";
             }
+
+            context.setCurrentDatabase(databaseName);
+            return "[OK]";
         }
 
         @Override
         public String visit(QueryParser.CreateTableCommand command) {
-            // TODO: create new .tab file with id + attributes header.
-            // new File
-            return notImplemented("CREATE TABLE");
+            // Create new .tab file with id + attributes header.
+            try {
+                requireCurrentDatabase();
+                String databaseFolder = context.getStorageFolderPath() + File.separator + requireCurrentDatabase();
+                File tableFile = new File(databaseFolder + File.separator + command.tableName() + ".tab");
+
+                if (tableFile.exists()) {
+                    return "[ERROR] Table " + command.tableName() + " already exists";
+                }
+
+                // Ensure the database directory exists
+                new File(databaseFolder).mkdirs();
+
+                // Write header: id + each attribute
+                List<String> attributes = command.attributes();
+                List<String> header = new ArrayList<>();
+                header.add("id");
+                header.addAll(attributes);
+
+                try (BufferedWriter writer = new BufferedWriter(new FileWriter(tableFile))) {
+                    writer.write(String.join("\t", header));
+                    writer.newLine();
+                }
+
+                return "[OK]";
+            } catch (IllegalArgumentException e) {
+                return "[ERROR] " + e.getMessage();
+            } catch (IOException e) {
+                return "[ERROR] Could not create table " + command.tableName();
+            }
         }
 
         @Override
         public String visit(QueryParser.DropDatabaseCommand command) {
-            // TODO: clean up code
             String databaseName = command.databaseName();
             String databaseFolderPath = context.getStorageFolderPath() + File.separator + databaseName;
             File dir = new File(databaseFolderPath);
-            boolean deleted = removeDirectory(dir);
-            if(!new File(databaseFolderPath).exists()) { // todo: add error validation for !repo
+
+            if (!dir.exists()) {
                 return "[ERROR] Database " + databaseName + " does not exist";
             }
-            else {
-                // Delete the database folder recursively
-                // check the folder !exists
-                if (new File(databaseFolderPath).exists()) {
-                    return("[ERROR] Database " + databaseName + " Could not be deleted");
-                }
-                return "[OK] Deleted " + databaseName + " in " + databaseFolderPath;
+
+            if (!removeDirectory(dir)) {
+                return "[ERROR] Database " + databaseName + " could not be deleted";
             }
+
+            // Clear current database if we dropped the active one
+            if (databaseName.equalsIgnoreCase(context.getCurrentDatabase())) {
+                context.setCurrentDatabase(null);
+            }
+            return "[OK]";
         }
         public Boolean removeDirectory(File file){
             if (file.isDirectory()) {
@@ -127,16 +149,18 @@ public class QueryExecutor {
 
         @Override
         public String visit(QueryParser.DropTableCommand command) {
-            // TODO: delete table .tab file from current database.
-            File file = resolveTableFile(command.tableName());
+            // Delete table .tab file from current database.
             try {
-                boolean deleted = file.delete();
-                if (!deleted) {
-                    return "[ERROR] File " + command.tableName() + " could not be deleted"; //todo: add error handling
+                File file = resolveTableFile(command.tableName());
+                if (!file.exists()) {
+                    return "[ERROR] Table " + command.tableName() + " does not exist";
                 }
-                return "[0K] Table " + command.tableName() + " deleted successfully";
-            } catch (IllegalArgumentException e){
-                return "[ERROR]" + e.getMessage() ;
+                if (!file.delete()) {
+                    return "[ERROR] Table " + command.tableName() + " could not be deleted";
+                }
+                return "[OK]";
+            } catch (IllegalArgumentException e) {
+                return "[ERROR] " + e.getMessage();
             }
         }
 
@@ -148,22 +172,46 @@ public class QueryExecutor {
 
         @Override
         public String visit(QueryParser.InsertCommand command) {
-            // TODO: load table, append row with generated id, persist file.
-            // Verify the table exists
-            Table table;
+            // Load table, append row with generated id, persist file.
             try {
                 File tableFile = resolveTableFile(command.tableName());
                 if (!tableFile.exists() || !tableFile.isFile()) {
                     return "[ERROR] Table " + command.tableName() + " does not exist";
                 }
-                table = executor.load(tableFile);
+
+                Table table = executor.load(tableFile);
+                List<String> columns = table.getColumnNames();
+
+                // Build value map: skip the id column (auto-generated), map values to column names
+                Map<String, String> rowValues = new HashMap<>();
+                List<String> values = command.values();
+
+                // First column is always id (auto-generated), so map values starting from column index 1
+                int valueIndex = 0;
+                for (int i = 0; i < columns.size(); i++) {
+                    String colName = columns.get(i);
+                    if ("id".equalsIgnoreCase(colName)) {
+                        continue; // id is auto-generated
+                    }
+                    if (valueIndex >= values.size()) {
+                        return "[ERROR] Not enough values for table " + command.tableName();
+                    }
+                    rowValues.put(colName, values.get(valueIndex));
+                    valueIndex++;
+                }
+
+                if (valueIndex != values.size()) {
+                    return "[ERROR] Too many values for table " + command.tableName();
+                }
+
+                table.insertRow(rowValues);
+                executor.saveTable(table, context.getStorageFolderPath() + File.separator + requireCurrentDatabase());
+                return "[OK]";
             } catch (IllegalArgumentException e) {
                 return "[ERROR] " + e.getMessage();
             } catch (IOException e) {
-                return "[ERROR] Could not read table " + command.tableName();
+                return "[ERROR] Could not write to table " + command.tableName();
             }
-
-            table.insertRow()
         }
 
         @Override
@@ -413,36 +461,28 @@ public class QueryExecutor {
         }
     }
 
-    void readAndSaveTable(File fileToOpen, String destination) throws IOException, FileNotFoundException {
-        saveTable(load(fileToOpen), destination);
-    }
+    ///  I/O Helpers ///
 
     // Load table from file
     Table load(File fileToOpen) throws IOException, FileNotFoundException {
-        // used to load a table from a file into memory
-        String name  = fileToOpen.getName().replaceFirst("\\.[^.]+$", "");
-        System.out.println("Reading table: " + name );
-        String currentLine = " ";
+        String name = fileToOpen.getName().replaceFirst("\\.[^.]+$", "");
+        String currentLine;
         String[] columnNames = new String[0];
         FileReader reader = new FileReader(fileToOpen);
         BufferedReader buffReader = new BufferedReader(reader);
         int rows = 0;
-        Table table = new Table(name , new ArrayList<>()); // initialise with name and empty schema
+        Table table = new Table(name, new ArrayList<>());
         // Parse columns
         while ((currentLine = buffReader.readLine()) != null) {
             if (rows == 0) {
-                columnNames = currentLine.split("\t"); // Split column into string array
-                List<Column> schema = new ArrayList<>();
-                for (String columnName : columnNames){
+                columnNames = currentLine.split("\\t");
+                for (String columnName : columnNames) {
                     table.addColumn(new Column(columnName));
                 }
-                // todo: update from using string as default type for all cols
             } else {
-                String[] rowData = currentLine.split("\t", -1);
-                Map<String,String> row = new HashMap<>(); // Key value pair for primary id's and values
-                // Store row data
+                String[] rowData = currentLine.split("\\t", -1);
+                Map<String, String> row = new HashMap<>();
                 for (int i = 0; i < rowData.length; i++) {
-                    // Add column name, value pair to row
                     row.put(columnNames[i], rowData[i]);
                 }
                 table.insertRow(row);
@@ -450,28 +490,22 @@ public class QueryExecutor {
             rows++;
         }
         buffReader.close();
-        printTable(table);
         return table;
     }
 
-    public void handleWrite(File fileToOpen) throws IOException, FileNotFoundException {
-        // todo: implement this
-        return;
-    }
-
-    // Save table to file/memory
-    // todo: refactor this to match the format of other classes below
+    // Save table to file
     public void saveTable(Table table, String destination) throws IOException {
+        File destDir = new File(destination);
+        if (!destDir.exists()) {
+            destDir.mkdirs();
+        }
         FileWriter writer = new FileWriter(destination + File.separator + table.getName() + ".tab");
         BufferedWriter buffWriter = new BufferedWriter(writer);
         List<String> columns = table.getColumnNames();
-        // Write columnNames to the header
-        for (int i = 0; i < columns.size(); i++) {
-            buffWriter.write(columns.get(i) + "\t");
-        }
-        // newline after header
+        // Write column names to header
+        buffWriter.write(String.join("\t", columns));
         buffWriter.newLine();
-        // write data to body
+        // Write data rows
         for (Row row : table.getAllRows()) {
             String[] rowData = row.toArray(columns);
             buffWriter.write(String.join("\t", rowData));
@@ -480,32 +514,11 @@ public class QueryExecutor {
         buffWriter.close();
     }
 
-    ///  I/O / Debug Helpers ///
-
-    public void printTable(Table table) {
-        System.out.println("PRINTING TABLE");
-        List<String> columns = table.getColumnNames();
-
-        // Header
-        System.out.println(String.join("\t", columns));
-
-        // Body
-        for (Row row : table.getAllRows()) {
-            String[] rowData = row.toArray(columns);
-            System.out.println(String.join("\t", rowData));
-        }
-    }
-
     public String normaliseDatabaseName(String databaseName) {
         if (databaseName == null) {
             return null;
         }
         return databaseName.toLowerCase();
     }
-
-
-
-
-    ///  I/O / Debug Helpers ///
 
 }

@@ -285,36 +285,86 @@ public class QueryParser {
     }
 
     private static Command parseInsert(String command) {
-        // TODO: Parse INSERT INTO [TableName] VALUES(...).
-        // Syntax = INSERT INTO tableName VALUES(value1, value2, value3)
-        String trimmed = normaliseCommand(command);
-        // Validate command structure
-        if (!trimmed.startsWith("INSERT INTO ")) {
+        // Parse INSERT INTO [TableName] VALUES(...).
+        String trimmed = command.trim();
+        String upper = trimmed.toUpperCase();
+
+        if (!upper.startsWith("INSERT INTO ")) {
             throw new IllegalArgumentException("Invalid INSERT syntax. Expected: INSERT INTO <table> VALUES(...)");
         }
-        int valuesIndex = trimmed.indexOf(" VALUES(");
-        if (valuesIndex < 0) {
+
+        // Find VALUES boundary — handle both "VALUES(" and "VALUES ("
+        int valuesKeywordIndex = upper.indexOf(" VALUES");
+        if (valuesKeywordIndex < 0) {
             throw new IllegalArgumentException("Invalid INSERT syntax. Missing VALUES clause");
         }
-        String tableName = trimmed.substring("INSERT INTO ".length(), valuesIndex).trim();
+        // Skip past "VALUES" and any whitespace to find the opening paren
+        int valuesEnd = valuesKeywordIndex + " VALUES".length();
+        while (valuesEnd < trimmed.length() && Character.isWhitespace(trimmed.charAt(valuesEnd))) {
+            valuesEnd++;
+        }
+        if (valuesEnd >= trimmed.length() || trimmed.charAt(valuesEnd) != '(') {
+            throw new IllegalArgumentException("Invalid INSERT syntax. VALUES must be followed by (value list)");
+        }
+
+        String tableName = trimmed.substring("INSERT INTO ".length(), valuesKeywordIndex).trim();
         if (tableName.isEmpty()) {
             throw new IllegalArgumentException("Table name is required after INSERT INTO");
         }
-        String valuesRaw = trimmed.substring(valuesIndex + " VALUES(".length(), trimmed.length() - 1).trim();
+        tableName = validateIdentifier(tableName, "table");
+
+        // Extract and parse values between parentheses
+        String afterParen = trimmed.substring(valuesEnd + 1).trim();  // skip the '('
+        if (!afterParen.endsWith(")")) {
+            throw new IllegalArgumentException("INSERT VALUES must be wrapped in parentheses");
+        }
+        String valuesRaw = afterParen.substring(0, afterParen.length() - 1).trim();
         if (valuesRaw.isEmpty()) {
             throw new IllegalArgumentException("INSERT VALUES clause must contain at least one value");
         }
 
-        // Build the list of values
-        List<String> values = valuesRaw.split("s");
-        // Validate values
-        for (String value : values) {
-            String trimmedValue = value.trim();
-
-        }
+        // Split on comma, handling quoted strings with commas inside them
+        List<String> values = splitValues(valuesRaw);
         return new InsertCommand(tableName, values);
+    }
 
+    private static List<String> splitValues(String valuesRaw) {
+        List<String> result = new ArrayList<>();
+        StringBuilder current = new StringBuilder();
+        boolean inSingleQuote = false;
+        boolean inDoubleQuote = false;
 
+        for (int i = 0; i < valuesRaw.length(); i++) {
+            char c = valuesRaw.charAt(i);
+            if (c == '\'' && !inDoubleQuote) {
+                inSingleQuote = !inSingleQuote;
+                current.append(c);
+            } else if (c == '"' && !inSingleQuote) {
+                inDoubleQuote = !inDoubleQuote;
+                current.append(c);
+            } else if (c == ',' && !inSingleQuote && !inDoubleQuote) {
+                result.add(stripMatchingQuotes(current.toString().trim()));
+                current.setLength(0);
+            } else {
+                current.append(c);
+            }
+        }
+        // Don't forget the last value
+        if (!current.isEmpty()) {
+            result.add(stripMatchingQuotes(current.toString().trim()));
+        }
+        return result;
+    }
+
+    private static String stripMatchingQuotes(String value) {
+        if (value.length() >= 2) {
+            boolean singleQuoted = value.startsWith("'") && value.endsWith("'");
+            boolean doubleQuoted = value.startsWith("\"") && value.endsWith("\"");
+            if (singleQuoted || doubleQuoted) {
+                return value.substring(1, value.length() - 1);
+            }
+        }
+        return value;
     }
 
     private static Command parseSelect(String command) {
@@ -381,8 +431,5 @@ public class QueryParser {
     private static Command parseJoin(String command) {
         // TODO: Parse JOIN [TableName] AND [TableName] ON [AttributeName] AND [AttributeName].
         throw new UnsupportedOperationException("TODO: implement JOIN parsing");
-    }
-    private static String normaliseCommand(String command) {
-        return command.trim().toUpperCase();
     }
 }

@@ -4,3 +4,4 @@ target/
 .DS_Store
 brief/
 visitor-architecture.md
+databases/
