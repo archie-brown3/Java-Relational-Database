@@ -5,7 +5,6 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -117,7 +116,7 @@ public class QueryExecutor {
 
         @Override
         public String visit(QueryParser.DropDatabaseCommand command) {
-            String databaseName = command.databaseName();
+            String databaseName = command.databaseName().toLowerCase();
             String databaseFolderPath = context.getStorageFolderPath() + File.separator + databaseName;
             File dir = new File(databaseFolderPath);
 
@@ -166,8 +165,47 @@ public class QueryExecutor {
 
         @Override
         public String visit(QueryParser.AlterCommand command) {
-            // TODO: support ALTER TABLE ADD/DROP while enforcing ID-column rules.
-            return notImplemented("ALTER TABLE");
+            // Support ALTER TABLE ADD/DROP while enforcing ID-column rules.
+            try {
+                File tableFile = resolveTableFile(command.tableName());
+                if (!tableFile.exists() || !tableFile.isFile()) {
+                    return "[ERROR] Table " + command.tableName() + " does not exist";
+                }
+
+                String attributeName = command.attributeName();
+                if ("id".equalsIgnoreCase(attributeName)) {
+                    return "[ERROR] Cannot alter the id column";
+                }
+
+                Table table = executor.load(tableFile);
+                String alteration = command.alterationType();
+
+                if ("ADD".equals(alteration)) {
+                    // Check column doesn't already exist
+                    if (findColumnNameIgnoreCase(table.getColumnNames(), attributeName) != null) {
+                        return "[ERROR] Column '" + attributeName + "' already exists";
+                    }
+                    table.addColumn(new Column(attributeName));
+                } else if ("DROP".equals(alteration)) {
+                    // Check column exists
+                    String actualCol = findColumnNameIgnoreCase(table.getColumnNames(), attributeName);
+                    if (actualCol == null) {
+                        return "[ERROR] Column '" + attributeName + "' does not exist";
+                    }
+                    // Remove column from schema and all rows
+                    // Table doesn't have a removeColumn method — we need to rebuild
+                    table.removeColumn(actualCol);
+                } else {
+                    return "[ERROR] Unknown ALTER operation: " + alteration;
+                }
+
+                executor.saveTable(table, context.getStorageFolderPath() + File.separator + requireCurrentDatabase());
+                return "[OK]";
+            } catch (IllegalArgumentException e) {
+                return "[ERROR] " + e.getMessage();
+            } catch (IOException e) {
+                return "[ERROR] Could not alter table " + command.tableName();
+            }
         }
 
         @Override
@@ -286,34 +324,168 @@ public class QueryExecutor {
 
         @Override
         public String visit(QueryParser.UpdateCommand command) {
-            // TODO: load table, update matching rows, persist file.
-            return notImplemented("UPDATE");
+            // Load table, update matching rows, persist file.
+            try {
+                File tableFile = resolveTableFile(command.tableName());
+                if (!tableFile.exists() || !tableFile.isFile()) {
+                    return "[ERROR] Table " + command.tableName() + " does not exist";
+                }
+
+                Table table = executor.load(tableFile);
+                Map<String, String> assignments = command.assignments();
+                int updatedCount = 0;
+
+                // Validate all assignment columns exist before making changes
+                for (String colName : assignments.keySet()) {
+                    if ("id".equalsIgnoreCase(colName)) {
+                        return "[ERROR] Cannot update id column";
+                    }
+                    if (findColumnNameIgnoreCase(table.getColumnNames(), colName) == null) {
+                        return "[ERROR] Unknown column '" + colName + "'";
+                    }
+                }
+
+                for (Row row : table.getAllRows()) {
+                    try {
+                        if (matchesRawCondition(table, row, command.rawCondition())) {
+                            for (var entry : assignments.entrySet()) {
+                                String actualCol = findColumnNameIgnoreCase(table.getColumnNames(), entry.getKey());
+                                row.set(actualCol, entry.getValue());
+                            }
+                            updatedCount++;
+                        }
+                    } catch (IllegalArgumentException e) {
+                        return "[ERROR] " + e.getMessage();
+                    }
+                }
+
+                executor.saveTable(table, context.getStorageFolderPath() + File.separator + requireCurrentDatabase());
+                return "[OK] " + updatedCount + " row(s) updated";
+            } catch (IllegalArgumentException e) {
+                return "[ERROR] " + e.getMessage();
+            } catch (IOException e) {
+                return "[ERROR] Could not update table " + command.tableName();
+            }
         }
 
         @Override
         public String visit(QueryParser.DeleteCommand command) {
-            // TODO: load table, delete matching rows, persist file.
-            return notImplemented("DELETE");
+            // Load table, delete matching rows, persist file.
+            try {
+                File tableFile = resolveTableFile(command.tableName());
+                if (!tableFile.exists() || !tableFile.isFile()) {
+                    return "[ERROR] Table " + command.tableName() + " does not exist";
+                }
+
+                Table table = executor.load(tableFile);
+                int deletedCount = 0;
+
+                // Build list of IDs to delete (avoid ConcurrentModificationException)
+                List<Integer> idsToDelete = new ArrayList<>();
+                for (Row row : table.getAllRows()) {
+                    try {
+                        if (matchesRawCondition(table, row, command.rawCondition())) {
+                            idsToDelete.add(row.getId());
+                        }
+                    } catch (IllegalArgumentException e) {
+                        return "[ERROR] " + e.getMessage();
+                    }
+                }
+
+                for (int id : idsToDelete) {
+                    table.deleteRow(id);
+                    deletedCount++;
+                }
+
+                executor.saveTable(table, context.getStorageFolderPath() + File.separator + requireCurrentDatabase());
+                return "[OK] " + deletedCount + " row(s) deleted";
+            } catch (IllegalArgumentException e) {
+                return "[ERROR] " + e.getMessage();
+            } catch (IOException e) {
+                return "[ERROR] Could not delete from table " + command.tableName();
+            }
         }
 
         @Override
         public String visit(QueryParser.JoinCommand command) {
-            // TODO: implement inner join output format from coursework brief.
-            return notImplemented("JOIN");
-        }
+            // Inner join: load both tables, match on specified attributes, return combined rows.
+            try {
+                File leftFile = resolveTableFile(command.leftTable());
+                File rightFile = resolveTableFile(command.rightTable());
 
-        private String withTableWrite(String tableName, Consumer<Table> action) {
-            // Helper wrapper for mutating commands (e.g. INSERT/UPDATE/DELETE/ALTER).
-            // Steps to implement:
-            // 1) Resolve and validate table file using resolveTableFile(tableName).
-            if (resolveTableFile(tableName) != null) {
+                if (!leftFile.exists() || !leftFile.isFile()) {
+                    return "[ERROR] Table " + command.leftTable() + " does not exist";
+                }
+                if (!rightFile.exists() || !rightFile.isFile()) {
+                    return "[ERROR] Table " + command.rightTable() + " does not exist";
+                }
 
+                Table leftTable = executor.load(leftFile);
+                Table rightTable = executor.load(rightFile);
+
+                // Validate join attributes exist
+                String leftCol = findColumnNameIgnoreCase(leftTable.getColumnNames(), command.leftAttribute());
+                String rightCol = findColumnNameIgnoreCase(rightTable.getColumnNames(), command.rightAttribute());
+                if (leftCol == null) {
+                    return "[ERROR] Column '" + command.leftAttribute() + "' not found in " + command.leftTable();
+                }
+                if (rightCol == null) {
+                    return "[ERROR] Column '" + command.rightAttribute() + "' not found in " + command.rightTable();
+                }
+
+                // Build header: id, leftTable.attr1, leftTable.attr2, ..., rightTable.attr1, rightTable.attr2, ...
+                List<String> leftColumns = leftTable.getColumnNames();
+                List<String> rightColumns = rightTable.getColumnNames();
+
+                StringBuilder response = new StringBuilder("[OK]");
+                response.append(System.lineSeparator());
+                response.append("id\t");
+
+                List<String> outputColumns = new ArrayList<>();
+                for (String col : leftColumns) {
+                    if ("id".equalsIgnoreCase(col)) continue;
+                    outputColumns.add(command.leftTable() + "." + col);
+                }
+                for (String col : rightColumns) {
+                    if ("id".equalsIgnoreCase(col)) continue;
+                    outputColumns.add(command.rightTable() + "." + col);
+                }
+                response.append(String.join("\t", outputColumns));
+
+                // Perform inner join
+                for (Row leftRow : leftTable.getAllRows()) {
+                    String leftValue = leftRow.get(leftCol);
+                    if (leftValue == null) leftValue = "";
+
+                    for (Row rightRow : rightTable.getAllRows()) {
+                        String rightValue = rightRow.get(rightCol);
+                        if (rightValue == null) rightValue = "";
+
+                        if (leftValue.equals(rightValue)) {
+                            response.append(System.lineSeparator());
+                            response.append(leftRow.getId()).append("\t");
+                            List<String> joinedValues = new ArrayList<>();
+                            for (String col : leftColumns) {
+                                if ("id".equalsIgnoreCase(col)) continue;
+                                String val = leftRow.get(col);
+                                joinedValues.add(val != null ? val : "");
+                            }
+                            for (String col : rightColumns) {
+                                if ("id".equalsIgnoreCase(col)) continue;
+                                String val = rightRow.get(col);
+                                joinedValues.add(val != null ? val : "");
+                            }
+                            response.append(String.join("\t", joinedValues));
+                        }
+                    }
+                }
+
+                return response.toString();
+            } catch (IllegalArgumentException e) {
+                return "[ERROR] " + e.getMessage();
+            } catch (IOException e) {
+                return "[ERROR] Could not perform JOIN operation";
             }
-            // 2) Load current table state via executor.load(...).
-            // 3) Apply mutation action against in-memory Table API.
-            // 4) Persist changes via executor.saveTable(...).
-            // 5) Return [OK] on success, [ERROR] on failure.
-            throw new UnsupportedOperationException("TODO: implement withTableWrite helper");
         }
 
         private File resolveTableFile(String tableName) {

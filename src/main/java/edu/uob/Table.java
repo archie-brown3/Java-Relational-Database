@@ -57,7 +57,29 @@ public class Table {
     
     public void addColumn(Column column) {
         schema.add(column);
-        // Optionally set default values for existing rows
+        // Set default empty values for existing rows
+        for (Row row : rows.values()) {
+            row.initializeColumn(column.name());
+        }
+    }
+
+    public boolean removeColumn(String columnName) {
+        // Find and remove the column from schema
+        Column toRemove = null;
+        for (Column col : schema) {
+            if (col.name().equalsIgnoreCase(columnName)) {
+                toRemove = col;
+                break;
+            }
+        }
+        if (toRemove == null) return false;
+        schema.remove(toRemove);
+
+        // Remove the column data from all rows
+        for (Row row : rows.values()) {
+            row.removeColumn(columnName);
+        }
+        return true;
     }
 
     public Optional<Column> getColumn(String name) {

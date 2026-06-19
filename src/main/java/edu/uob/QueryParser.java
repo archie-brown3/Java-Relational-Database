@@ -1,6 +1,7 @@
 package edu.uob;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -251,28 +252,34 @@ public class QueryParser {
         }
 
         String trimmed = raw.trim();
-        if (!trimmed.matches("[A-Za-z0-9]+")) {
+        if (!trimmed.matches("[A-Za-z0-9_]+")) {
             throw new IllegalArgumentException("Invalid " + kind + " name: " + trimmed);
         }
         return trimmed;
     }
 
     private static Command parseDrop(String command) {
-        // TODO: Route between DROP DATABASE and DROP TABLE forms.
-        // Two stage parse
-        // Validate and route first two keywords:
-        String normalised = command.trim().toUpperCase();
-        String[] parts = normalised.split("\\s+");
+        // Route between DROP DATABASE and DROP TABLE forms.
+        String trimmed = command.trim();
+        String upper = trimmed.toUpperCase();
+        String[] parts = trimmed.split("\\s+", 3);  // Use original-case for name extraction
+
         if (parts.length < 2) {
             throw new IllegalArgumentException("Invalid DROP syntax. Expected: DROP TABLE <name> or DROP DATABASE <name>");
         }
-        if (!parts[0].equalsIgnoreCase("DROP")) {
-            throw new IllegalArgumentException("Invalid DROP syntax");
+
+        String targetType = parts[1].toUpperCase();
+        if (!targetType.equals("DATABASE") && !targetType.equals("TABLE")) {
+            throw new IllegalArgumentException("Invalid DROP syntax. Expected DATABASE or TABLE after DROP");
         }
-        String targetType = parts[1];
+
+        if (parts.length < 3) {
+            throw new IllegalArgumentException("Missing name for DROP " + targetType);
+        }
+
         String targetName = validateIdentifier(parts[2], targetType.equals("TABLE") ? "table" : "database");
 
-        return switch (targetType){
+        return switch (targetType) {
             case "DATABASE" -> new DropDatabaseCommand(targetName);
             case "TABLE" -> new DropTableCommand(targetName);
             default -> throw new IllegalArgumentException("Invalid DROP syntax");
@@ -280,8 +287,34 @@ public class QueryParser {
     }
 
     private static Command parseAlter(String command) {
-        // TODO: Parse ALTER TABLE [TableName] [ADD|DROP] [AttributeName].
-        throw new UnsupportedOperationException("TODO: implement ALTER parsing");
+        // Parse ALTER TABLE <TableName> ADD|DROP <AttributeName>.
+        String trimmed = command.trim();
+        String upper = trimmed.toUpperCase();
+
+        if (!upper.startsWith("ALTER TABLE ")) {
+            throw new IllegalArgumentException("Invalid ALTER syntax. Expected: ALTER TABLE <name> ADD|DROP <attribute>");
+        }
+
+        String rest = trimmed.substring("ALTER TABLE ".length()).trim();
+        if (rest.isEmpty()) {
+            throw new IllegalArgumentException("Table name is required for ALTER TABLE");
+        }
+
+        // Split on whitespace: first token is table name, second is ADD/DROP, third is attribute name
+        String[] parts = rest.split("\\s+", 3);
+        if (parts.length < 3) {
+            throw new IllegalArgumentException("Invalid ALTER syntax. Expected: ALTER TABLE <name> ADD|DROP <attribute>");
+        }
+
+        String tableName = validateIdentifier(parts[0], "table");
+        String alterationType = parts[1].toUpperCase();
+
+        if (!alterationType.equals("ADD") && !alterationType.equals("DROP")) {
+            throw new IllegalArgumentException("Invalid ALTER type: " + alterationType + ". Expected ADD or DROP");
+        }
+
+        String attributeName = validateIdentifier(parts[2], "attribute");
+        return new AlterCommand(tableName, alterationType, attributeName);
     }
 
     private static Command parseInsert(String command) {
@@ -419,17 +452,133 @@ public class QueryParser {
     }
 
     private static Command parseUpdate(String command) {
-        // TODO: Parse UPDATE [TableName] SET <NameValueList> WHERE <Condition>.
-        throw new UnsupportedOperationException("TODO: implement UPDATE parsing");
+        // Parse UPDATE <TableName> SET <col1>=<val1>, <col2>=<val2>, ... WHERE <Condition>.
+        String trimmed = command.trim();
+        String upper = trimmed.toUpperCase();
+
+        if (!upper.startsWith("UPDATE ")) {
+            throw new IllegalArgumentException("Invalid UPDATE syntax. Expected: UPDATE <table> SET <assignments> WHERE <condition>");
+        }
+
+        int setIndex = upper.indexOf(" SET ");
+        if (setIndex < 0) {
+            throw new IllegalArgumentException("Invalid UPDATE syntax. Missing SET clause");
+        }
+
+        String tableName = trimmed.substring("UPDATE ".length(), setIndex).trim();
+        if (tableName.isEmpty()) {
+            throw new IllegalArgumentException("Table name is required for UPDATE");
+        }
+        tableName = validateIdentifier(tableName, "table");
+
+        String afterSet = trimmed.substring(setIndex + " SET ".length()).trim();
+        int whereIndex = afterSet.toUpperCase().indexOf(" WHERE ");
+        if (whereIndex < 0) {
+            throw new IllegalArgumentException("Invalid UPDATE syntax. Missing WHERE clause");
+        }
+
+        String assignmentsRaw = afterSet.substring(0, whereIndex).trim();
+        String conditionRaw = afterSet.substring(whereIndex + " WHERE ".length()).trim();
+
+        if (assignmentsRaw.isEmpty()) {
+            throw new IllegalArgumentException("UPDATE SET clause must contain at least one assignment");
+        }
+        if (conditionRaw.isEmpty()) {
+            throw new IllegalArgumentException("UPDATE WHERE clause requires a condition");
+        }
+
+        Map<String, String> assignments = parseAssignments(assignmentsRaw);
+        return new UpdateCommand(tableName, assignments, conditionRaw);
+    }
+
+    private static Map<String, String> parseAssignments(String assignmentsRaw) {
+        Map<String, String> assignments = new HashMap<>();
+        String[] parts = assignmentsRaw.split(",");
+        for (String part : parts) {
+            String trimmed = part.trim();
+            int eqIndex = trimmed.indexOf('=');
+            if (eqIndex < 0) {
+                throw new IllegalArgumentException("Invalid assignment: " + trimmed + ". Expected column=value");
+            }
+            String colName = validateIdentifier(trimmed.substring(0, eqIndex).trim(), "column");
+            String value = stripMatchingQuotes(trimmed.substring(eqIndex + 1).trim());
+            assignments.put(colName, value);
+        }
+        return assignments;
     }
 
     private static Command parseDelete(String command) {
-        // TODO: Parse DELETE FROM [TableName] WHERE <Condition>.
-        throw new UnsupportedOperationException("TODO: implement DELETE parsing");
+        // Parse DELETE FROM <TableName> WHERE <Condition>.
+        String trimmed = command.trim();
+        String upper = trimmed.toUpperCase();
+
+        if (!upper.startsWith("DELETE FROM ")) {
+            throw new IllegalArgumentException("Invalid DELETE syntax. Expected: DELETE FROM <table> WHERE <condition>");
+        }
+
+        String afterFrom = trimmed.substring("DELETE FROM ".length()).trim();
+        int whereIndex = afterFrom.toUpperCase().indexOf(" WHERE ");
+        if (whereIndex < 0) {
+            throw new IllegalArgumentException("Invalid DELETE syntax. Missing WHERE clause");
+        }
+
+        String tableName = afterFrom.substring(0, whereIndex).trim();
+        if (tableName.isEmpty()) {
+            throw new IllegalArgumentException("Table name is required for DELETE FROM");
+        }
+        tableName = validateIdentifier(tableName, "table");
+
+        String conditionRaw = afterFrom.substring(whereIndex + " WHERE ".length()).trim();
+        if (conditionRaw.isEmpty()) {
+            throw new IllegalArgumentException("DELETE WHERE clause requires a condition");
+        }
+
+        return new DeleteCommand(tableName, conditionRaw);
     }
 
     private static Command parseJoin(String command) {
-        // TODO: Parse JOIN [TableName] AND [TableName] ON [AttributeName] AND [AttributeName].
-        throw new UnsupportedOperationException("TODO: implement JOIN parsing");
+        // Parse JOIN <Table1> AND <Table2> ON <Attr1> AND <Attr2>.
+        String trimmed = command.trim();
+        String upper = trimmed.toUpperCase();
+
+        if (!upper.startsWith("JOIN ")) {
+            throw new IllegalArgumentException("Invalid JOIN syntax. Expected: JOIN <table1> AND <table2> ON <attr1> AND <attr2>");
+        }
+
+        String rest = trimmed.substring("JOIN ".length()).trim();
+
+        int andIndex = rest.toUpperCase().indexOf(" AND ");
+        if (andIndex < 0) {
+            throw new IllegalArgumentException("Invalid JOIN syntax. Missing AND between table names");
+        }
+
+        String leftTable = rest.substring(0, andIndex).trim();
+        if (leftTable.isEmpty()) {
+            throw new IllegalArgumentException("First table name is required for JOIN");
+        }
+        leftTable = validateIdentifier(leftTable, "table");
+
+        String afterAnd = rest.substring(andIndex + " AND ".length()).trim();
+        int onIndex = afterAnd.toUpperCase().indexOf(" ON ");
+        if (onIndex < 0) {
+            throw new IllegalArgumentException("Invalid JOIN syntax. Missing ON clause");
+        }
+
+        String rightTable = afterAnd.substring(0, onIndex).trim();
+        if (rightTable.isEmpty()) {
+            throw new IllegalArgumentException("Second table name is required for JOIN");
+        }
+        rightTable = validateIdentifier(rightTable, "table");
+
+        String onClause = afterAnd.substring(onIndex + " ON ".length()).trim();
+        String[] onParts = onClause.split("(?i)\\s+AND\\s+", 2);
+        if (onParts.length < 2) {
+            throw new IllegalArgumentException("Invalid JOIN syntax. ON clause must have two attributes separated by AND");
+        }
+
+        String leftAttribute = validateIdentifier(onParts[0].trim(), "attribute");
+        String rightAttribute = validateIdentifier(onParts[1].trim(), "attribute");
+
+        return new JoinCommand(leftTable, rightTable, leftAttribute, rightAttribute);
     }
 }

@@ -53,10 +53,10 @@ A relational database engine built from scratch in Java 17 with a custom SQL par
 | `DROP TABLE` | ✅ | `DROP TABLE <name>;` |
 | `INSERT` | ✅ | `INSERT INTO <table> VALUES (<v1>, <v2>, ...);` |
 | `SELECT` | ✅ | `SELECT <*\|cols> FROM <table> [WHERE <cond>];` |
-| `UPDATE` | 🚧 | Planned |
-| `DELETE` | 🚧 | Planned |
-| `JOIN` | 🚧 | Planned |
-| `ALTER` | 🚧 | Planned |
+| `UPDATE` | ✅ | `UPDATE <table> SET <col>=<val> WHERE <cond>;` |
+| `DELETE` | ✅ | `DELETE FROM <table> WHERE <cond>;` |
+| `JOIN` | ✅ | `JOIN <t1> AND <t2> ON <attr1> AND <attr2>;` |
+| `ALTER` | ✅ | `ALTER TABLE <name> ADD\|DROP <attribute>;` |
 
 ### WHERE Conditions (SELECT)
 
@@ -147,7 +147,8 @@ Every command returns either `[OK]` or `[ERROR]` on the first line. Query result
 - Single-user: one connection at a time
 - Integer IDs are monotonic (no reuse after deletes)
 - SQL dialect is deliberately minimal (coursework scope)
-- UPDATE, DELETE, JOIN, ALTER are stubbed (return `[ERROR] ... not implemented yet`)
+- No nested WHERE parenthesization (AND/OR are left-associative)
+- JOIN only supports single-column inner joins
 
 ## Lessons Learned
 

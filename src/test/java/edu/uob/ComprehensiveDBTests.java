@@ -1,0 +1,394 @@
+package edu.uob;
+
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import java.time.Duration;
+
+public class ComprehensiveDBTests {
+
+    private DBServer server;
+
+    @BeforeEach
+    public void setup() {
+        server = new DBServer();
+    }
+
+    private String sendCommandToServer(String command) {
+        return assertTimeoutPreemptively(Duration.ofMillis(2000), () -> {
+            return server.handleCommand(command);
+        }, "Server took too long to respond");
+    }
+
+    private String randomName() {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < 10; i++) sb.append((char) (97 + (Math.random() * 25.0)));
+        return sb.toString();
+    }
+
+    // ─── CREATE and USE ───────────────────────────────────────────────
+
+    @Test
+    public void testCreateDatabase() {
+        String db = randomName();
+        String r = sendCommandToServer("CREATE DATABASE " + db + ";");
+        assertTrue(r.startsWith("[OK]"), "CREATE DATABASE should return [OK]: " + r);
+    }
+
+    @Test
+    public void testCreateDuplicateDatabase() {
+        String db = randomName();
+        sendCommandToServer("CREATE DATABASE " + db + ";");
+        String r = sendCommandToServer("CREATE DATABASE " + db + ";");
+        assertTrue(r.startsWith("[ERROR]"), "Duplicate database should error: " + r);
+    }
+
+    @Test
+    public void testUseNonexistentDatabase() {
+        String r = sendCommandToServer("USE nonexistentdb123;");
+        assertTrue(r.startsWith("[ERROR]"), "Using nonexistent DB should error: " + r);
+    }
+
+    // ─── CREATE TABLE ──────────────────────────────────────────────────
+
+    @Test
+    public void testCreateTable() {
+        String db = randomName();
+        sendCommandToServer("CREATE DATABASE " + db + ";");
+        sendCommandToServer("USE " + db + ";");
+        String r = sendCommandToServer("CREATE TABLE t1 (colA, colB);");
+        assertTrue(r.startsWith("[OK]"), "CREATE TABLE should return [OK]: " + r);
+    }
+
+    @Test
+    public void testCreateTableNoDatabase() {
+        String r = sendCommandToServer("CREATE TABLE t1 (colA);");
+        assertTrue(r.startsWith("[ERROR]"), "CREATE TABLE without USE should error: " + r);
+    }
+
+    // ─── INSERT ────────────────────────────────────────────────────────
+
+    @Test
+    public void testInsertAndSelect() {
+        String db = randomName();
+        sendCommandToServer("CREATE DATABASE " + db + ";");
+        sendCommandToServer("USE " + db + ";");
+        sendCommandToServer("CREATE TABLE test (name, score);");
+        sendCommandToServer("INSERT INTO test VALUES ('Alpha', 100);");
+        String r = sendCommandToServer("SELECT * FROM test;");
+        assertTrue(r.contains("Alpha"), "SELECT should return inserted row");
+        assertTrue(r.contains("100"), "SELECT should return inserted score");
+    }
+
+    @Test
+    public void testInsertIntoNonexistentTable() {
+        String db = randomName();
+        sendCommandToServer("CREATE DATABASE " + db + ";");
+        sendCommandToServer("USE " + db + ";");
+        String r = sendCommandToServer("INSERT INTO ghosts VALUES ('Boo');");
+        assertTrue(r.startsWith("[ERROR]"), "INSERT into missing table should error: " + r);
+    }
+
+    @Test
+    public void testInsertWrongValueCount() {
+        String db = randomName();
+        sendCommandToServer("CREATE DATABASE " + db + ";");
+        sendCommandToServer("USE " + db + ";");
+        sendCommandToServer("CREATE TABLE t2 (a, b, c);");
+        String r = sendCommandToServer("INSERT INTO t2 VALUES ('x', 'y');");
+        assertTrue(r.startsWith("[ERROR]"), "Wrong value count should error: " + r);
+    }
+
+    @Test
+    public void testInsertWithQuotesAndSpaces() {
+        String db = randomName();
+        sendCommandToServer("CREATE DATABASE " + db + ";");
+        sendCommandToServer("USE " + db + ";");
+        sendCommandToServer("CREATE TABLE t3 (city, population);");
+        String r = sendCommandToServer("INSERT INTO t3 VALUES ('New York', 8500000);");
+        assertTrue(r.startsWith("[OK]"), "INSERT with space in quoted value should work: " + r);
+        r = sendCommandToServer("SELECT * FROM t3;");
+        assertTrue(r.contains("New York"), "SELECT should return value with space: " + r);
+    }
+
+    // ─── SELECT with WHERE ─────────────────────────────────────────────
+
+    @Test
+    public void testSelectWhereEquals() {
+        String db = randomName();
+        sendCommandToServer("CREATE DATABASE " + db + ";");
+        sendCommandToServer("USE " + db + ";");
+        sendCommandToServer("CREATE TABLE people (name, age);");
+        sendCommandToServer("INSERT INTO people VALUES ('Alice', 30);");
+        sendCommandToServer("INSERT INTO people VALUES ('Bob', 25);");
+        String r = sendCommandToServer("SELECT * FROM people WHERE age == 30;");
+        assertTrue(r.contains("Alice"), "WHERE == should match Alice");
+        assertFalse(r.contains("Bob"), "WHERE == should not match Bob");
+    }
+
+    @Test
+    public void testSelectWhereGreaterThan() {
+        String db = randomName();
+        sendCommandToServer("CREATE DATABASE " + db + ";");
+        sendCommandToServer("USE " + db + ";");
+        sendCommandToServer("CREATE TABLE scores (player, points);");
+        sendCommandToServer("INSERT INTO scores VALUES ('P1', 50);");
+        sendCommandToServer("INSERT INTO scores VALUES ('P2', 80);");
+        String r = sendCommandToServer("SELECT * FROM scores WHERE points > 60;");
+        assertTrue(r.contains("P2"), "WHERE > should match P2");
+        assertFalse(r.contains("P1"), "WHERE > should not match P1");
+    }
+
+    @Test
+    public void testSelectWhereLike() {
+        String db = randomName();
+        sendCommandToServer("CREATE DATABASE " + db + ";");
+        sendCommandToServer("USE " + db + ";");
+        sendCommandToServer("CREATE TABLE items (name);");
+        sendCommandToServer("INSERT INTO items VALUES ('Apple');");
+        sendCommandToServer("INSERT INTO items VALUES ('Apricot');");
+        sendCommandToServer("INSERT INTO items VALUES ('Banana');");
+        String r = sendCommandToServer("SELECT * FROM items WHERE name LIKE 'Ap%';");
+        assertTrue(r.contains("Apple"), "LIKE Ap% should match Apple");
+        assertTrue(r.contains("Apricot"), "LIKE Ap% should match Apricot");
+        assertFalse(r.contains("Banana"), "LIKE Ap% should not match Banana");
+    }
+
+    @Test
+    public void testSelectWhereAndOr() {
+        String db = randomName();
+        sendCommandToServer("CREATE DATABASE " + db + ";");
+        sendCommandToServer("USE " + db + ";");
+        sendCommandToServer("CREATE TABLE data (x, y);");
+        sendCommandToServer("INSERT INTO data VALUES ('a', 10);");
+        sendCommandToServer("INSERT INTO data VALUES ('a', 20);");
+        sendCommandToServer("INSERT INTO data VALUES ('b', 10);");
+        String r = sendCommandToServer("SELECT * FROM data WHERE x == 'a' AND y == 20;");
+        assertTrue(r.contains("a"), "AND condition should match");
+        assertFalse(r.contains("b"), "AND condition should exclude b");
+    }
+
+    // ─── UPDATE ────────────────────────────────────────────────────────
+
+    @Test
+    public void testUpdateSingleRow() {
+        String db = randomName();
+        sendCommandToServer("CREATE DATABASE " + db + ";");
+        sendCommandToServer("USE " + db + ";");
+        sendCommandToServer("CREATE TABLE upd (val);");
+        sendCommandToServer("INSERT INTO upd VALUES ('old');");
+        String r = sendCommandToServer("UPDATE upd SET val='new' WHERE val == 'old';");
+        assertTrue(r.startsWith("[OK]"), "UPDATE should return [OK]: " + r);
+        r = sendCommandToServer("SELECT * FROM upd;");
+        assertTrue(r.contains("new"), "UPDATE should change value");
+        assertFalse(r.contains("old"), "Old value should be gone");
+    }
+
+    @Test
+    public void testUpdateMultipleRows() {
+        String db = randomName();
+        sendCommandToServer("CREATE DATABASE " + db + ";");
+        sendCommandToServer("USE " + db + ";");
+        sendCommandToServer("CREATE TABLE multi (status);");
+        sendCommandToServer("INSERT INTO multi VALUES ('pending');");
+        sendCommandToServer("INSERT INTO multi VALUES ('pending');");
+        sendCommandToServer("INSERT INTO multi VALUES ('done');");
+        String r = sendCommandToServer("UPDATE multi SET status='approved' WHERE status == 'pending';");
+        assertTrue(r.contains("2 row(s)"), "Should update 2 rows: " + r);
+    }
+
+    @Test
+    public void testUpdateIdRejected() {
+        String db = randomName();
+        sendCommandToServer("CREATE DATABASE " + db + ";");
+        sendCommandToServer("USE " + db + ";");
+        sendCommandToServer("CREATE TABLE noid (x);");
+        sendCommandToServer("INSERT INTO noid VALUES ('test');");
+        String r = sendCommandToServer("UPDATE noid SET id=99 WHERE x == 'test';");
+        assertTrue(r.startsWith("[ERROR]"), "Updating id should be rejected: " + r);
+    }
+
+    // ─── DELETE ────────────────────────────────────────────────────────
+
+    @Test
+    public void testDeleteSingleRow() {
+        String db = randomName();
+        sendCommandToServer("CREATE DATABASE " + db + ";");
+        sendCommandToServer("USE " + db + ";");
+        sendCommandToServer("CREATE TABLE del (name);");
+        sendCommandToServer("INSERT INTO del VALUES ('keep');");
+        sendCommandToServer("INSERT INTO del VALUES ('remove');");
+        String r = sendCommandToServer("DELETE FROM del WHERE name == 'remove';");
+        assertTrue(r.contains("1 row(s)"), "Should delete 1 row: " + r);
+        r = sendCommandToServer("SELECT * FROM del;");
+        assertTrue(r.contains("keep"), "Should keep matching row");
+        assertFalse(r.contains("remove"), "Should remove matching row");
+    }
+
+    @Test
+    public void testDeleteNoMatch() {
+        String db = randomName();
+        sendCommandToServer("CREATE DATABASE " + db + ";");
+        sendCommandToServer("USE " + db + ";");
+        sendCommandToServer("CREATE TABLE nomatch (x);");
+        sendCommandToServer("INSERT INTO nomatch VALUES ('a');");
+        String r = sendCommandToServer("DELETE FROM nomatch WHERE x == 'z';");
+        assertTrue(r.contains("0 row(s)"), "Should delete 0 rows: " + r);
+    }
+
+    @Test
+    public void testDeleteWithoutWhereRejected() {
+        String db = randomName();
+        sendCommandToServer("CREATE DATABASE " + db + ";");
+        sendCommandToServer("USE " + db + ";");
+        // Parse should reject DELETE without WHERE
+        String r = sendCommandToServer("DELETE FROM whatever;");
+        assertTrue(r.startsWith("[ERROR]"), "DELETE without WHERE should error: " + r);
+    }
+
+    // ─── ALTER ─────────────────────────────────────────────────────────
+
+    @Test
+    public void testAlterAddColumn() {
+        String db = randomName();
+        sendCommandToServer("CREATE DATABASE " + db + ";");
+        sendCommandToServer("USE " + db + ";");
+        sendCommandToServer("CREATE TABLE altadd (a);");
+        sendCommandToServer("INSERT INTO altadd VALUES ('x');");
+        String r = sendCommandToServer("ALTER TABLE altadd ADD b;");
+        assertTrue(r.startsWith("[OK]"), "ALTER ADD should return [OK]: " + r);
+        r = sendCommandToServer("SELECT * FROM altadd;");
+        assertTrue(r.contains("b"), "New column should appear in header");
+    }
+
+    @Test
+    public void testAlterDropColumn() {
+        String db = randomName();
+        sendCommandToServer("CREATE DATABASE " + db + ";");
+        sendCommandToServer("USE " + db + ";");
+        sendCommandToServer("CREATE TABLE altdrop (keep, remove_me);");
+        sendCommandToServer("INSERT INTO altdrop VALUES ('val1', 'val2');");
+        String r = sendCommandToServer("ALTER TABLE altdrop DROP remove_me;");
+        assertTrue(r.startsWith("[OK]"), "ALTER DROP should return [OK]: " + r);
+        r = sendCommandToServer("SELECT * FROM altdrop;");
+        assertTrue(r.contains("keep"), "Keep column should remain");
+        assertFalse(r.contains("remove_me"), "Dropped column should be gone");
+    }
+
+    @Test
+    public void testAlterDropIdRejected() {
+        String db = randomName();
+        sendCommandToServer("CREATE DATABASE " + db + ";");
+        sendCommandToServer("USE " + db + ";");
+        sendCommandToServer("CREATE TABLE noiddrop (x);");
+        String r = sendCommandToServer("ALTER TABLE noiddrop DROP id;");
+        assertTrue(r.startsWith("[ERROR]"), "Dropping id should be rejected: " + r);
+    }
+
+    // ─── JOIN ──────────────────────────────────────────────────────────
+
+    @Test
+    public void testJoin() {
+        String db = randomName();
+        sendCommandToServer("CREATE DATABASE " + db + ";");
+        sendCommandToServer("USE " + db + ";");
+        sendCommandToServer("CREATE TABLE employees (name, dept_id);");
+        sendCommandToServer("INSERT INTO employees VALUES ('Alice', 1);");
+        sendCommandToServer("INSERT INTO employees VALUES ('Bob', 2);");
+        sendCommandToServer("CREATE TABLE departments (dept_name);");
+        sendCommandToServer("INSERT INTO departments VALUES ('Engineering');");
+        sendCommandToServer("INSERT INTO departments VALUES ('Sales');");
+        String r = sendCommandToServer("JOIN employees AND departments ON dept_id AND id;");
+        assertTrue(r.startsWith("[OK]"), "JOIN should return [OK]: " + r);
+        assertTrue(r.contains("employees.name"), "Header should prefix columns");
+        assertTrue(r.contains("departments.dept_name"), "Header should prefix right table columns");
+        assertTrue(r.contains("Alice"), "Alice should appear in join result");
+        assertTrue(r.contains("Engineering"), "Engineering should appear in join result");
+    }
+
+    @Test
+    public void testJoinNoMatch() {
+        String db = randomName();
+        sendCommandToServer("CREATE DATABASE " + db + ";");
+        sendCommandToServer("USE " + db + ";");
+        sendCommandToServer("CREATE TABLE t1 (x);");
+        sendCommandToServer("INSERT INTO t1 VALUES ('a');");
+        sendCommandToServer("CREATE TABLE t2 (y);");
+        sendCommandToServer("INSERT INTO t2 VALUES ('b');");
+        String r = sendCommandToServer("JOIN t1 AND t2 ON x AND y;");
+        assertTrue(r.startsWith("[OK]"), "JOIN with no match should still be [OK]");
+        assertFalse(r.contains("a"), "No matching rows expected when x != y");
+    }
+
+    // ─── DROP ──────────────────────────────────────────────────────────
+
+    @Test
+    public void testDropTable() {
+        String db = randomName();
+        sendCommandToServer("CREATE DATABASE " + db + ";");
+        sendCommandToServer("USE " + db + ";");
+        sendCommandToServer("CREATE TABLE todrop (x);");
+        String r = sendCommandToServer("DROP TABLE todrop;");
+        assertTrue(r.startsWith("[OK]"), "DROP TABLE should return [OK]: " + r);
+        r = sendCommandToServer("SELECT * FROM todrop;");
+        assertTrue(r.startsWith("[ERROR]"), "Selecting dropped table should error: " + r);
+    }
+
+    @Test
+    public void testDropDatabase() {
+        String db = randomName();
+        sendCommandToServer("CREATE DATABASE " + db + ";");
+        sendCommandToServer("USE " + db + ";");
+        sendCommandToServer("CREATE TABLE dummy (x);");
+        // Switch away so we can drop it
+        String db2 = randomName();
+        sendCommandToServer("CREATE DATABASE " + db2 + ";");
+        sendCommandToServer("USE " + db2 + ";");
+        String r = sendCommandToServer("DROP DATABASE " + db + ";");
+        assertTrue(r.startsWith("[OK]"), "DROP DATABASE should return [OK]: " + r);
+    }
+
+    // ─── PERSISTENCE ───────────────────────────────────────────────────
+
+    @Test
+    public void testPersistenceAcrossServerRestart() {
+        String db = randomName();
+        sendCommandToServer("CREATE DATABASE " + db + ";");
+        sendCommandToServer("USE " + db + ";");
+        sendCommandToServer("CREATE TABLE persist (data);");
+        sendCommandToServer("INSERT INTO persist VALUES ('survives');");
+        // New server instance
+        server = new DBServer();
+        sendCommandToServer("USE " + db + ";");
+        String r = sendCommandToServer("SELECT * FROM persist;");
+        assertTrue(r.contains("survives"), "Data should persist across server restart: " + r);
+    }
+
+    // ─── ERROR PROTOCOL ────────────────────────────────────────────────
+
+    @Test
+    public void testAllResponsesHaveBrackets() {
+        String db = randomName();
+        sendCommandToServer("CREATE DATABASE " + db + ";");
+        sendCommandToServer("USE " + db + ";");
+        sendCommandToServer("CREATE TABLE bracket (x);");
+        sendCommandToServer("INSERT INTO bracket VALUES ('y');");
+
+        String[] commands = {
+            "SELECT * FROM bracket;",
+            "UPDATE bracket SET x='z' WHERE x == 'y';",
+            "DELETE FROM bracket WHERE x == 'z';",
+            "ALTER TABLE bracket ADD newcol;",
+            "CREATE TABLE bracket2 (a);",
+            "INSERT INTO bracket2 VALUES ('1');",
+        };
+
+        for (String cmd : commands) {
+            String r = sendCommandToServer(cmd);
+            assertTrue(r.startsWith("[OK]") || r.startsWith("[ERROR]"),
+                "Response for '" + cmd + "' should start with [OK] or [ERROR]: " + r);
+        }
+    }
+}

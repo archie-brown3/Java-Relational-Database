@@ -27,6 +27,14 @@ public class Row {
         data.put(columnName, value);
     }
 
+    public void initializeColumn(String columnName) {
+        data.putIfAbsent(columnName, "");
+    }
+
+    public void removeColumn(String columnName) {
+        data.remove(columnName);
+    }
+
     public String[] toArray(List<String> columnOrder) {
         return columnOrder.stream()
             .map(col -> col.equalsIgnoreCase("id") ? String.valueOf(id) : data.getOrDefault(col, ""))
