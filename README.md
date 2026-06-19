@@ -1,6 +1,6 @@
 # Java Relational Database
 
-A relational database engine built from scratch in Java 17 with a custom SQL parser, query executor, and file-based persistence layer. Communicates over TCP sockets with a client-server architecture.
+A relational database engine built from scratch in Java 17. Parses a custom SQL dialect, executes queries against an in-memory table model, and persists data to disk as tab-separated files. Client-server architecture over TCP sockets.
 
 ## Architecture
 
@@ -36,29 +36,37 @@ A relational database engine built from scratch in Java 17 with a custom SQL par
                                    └─────────────┘         └─────────────┘         └─────────────┘
 ```
 
-**Key design decisions:**
-- **Visitor pattern** — Parser produces immutable `Command` records. Executor visits them. Parser has zero side effects, executor owns all I/O and state.
-- **Sealed type hierarchy** — All 11 command types are sealed records implementing `Command`, with exhaustive visitor dispatch. No `instanceof` chains.
-- **File-based storage** — Each database is a directory, each table is a `.tab` (TSV) file with an `id` column. Survives server restarts.
-- **TCP client-server** — Server listens on port 8888, handles multiple sequential connections.
+## Design Philosophy
+
+**Separation of concerns** drives the entire architecture. The `QueryParser` is a pure function: it accepts a SQL string and returns an immutable command object. It has no knowledge of files, sockets, or runtime state. This keeps the parser testable in isolation and makes the grammar easy to extend without touching execution logic.
+
+**The Visitor pattern** decouples command definitions from command execution. Each of the 11 SQL commands is a sealed record implementing `Command`. The `QueryExecutor` implements `CommandVisitor<String>`, providing a `visit()` method for each command type. There are no `instanceof` chains, no switch-on-type, and adding a new command requires only adding a record and a visitor method — the compiler enforces exhaustive handling through the sealed type hierarchy. This promotes loose coupling between the parser layer and the execution layer.
+
+**Single responsibility** is enforced at the class level. `Table` manages an in-memory collection of rows and columns with no I/O. `Row` owns a single record's key-value data. `Column` is a value object carrying name, type, and foreign key metadata. `QueryExecutor` owns all file I/O and delegates to these domain objects for in-memory operations. No class mixes persistence with business logic.
+
+**Immutability where possible.** Parsed commands are Java records — shallowly immutable, trivially thread-safe, and safe to pass across layers. The `ExecutionContext` is the only mutable object in the system, carrying the current database selection and storage root path. All other state changes flow through explicit save operations.
+
+**Single-user, file-based persistence.** Each database is a directory. Each table is a `.tab` file — human-readable TSV with an auto-incrementing `id` column as the first field. This design prioritises debuggability over throughput: you can inspect the database state with `cat`, diff it with `git`, and recover from corruption by hand. The engine loads an entire table into memory on first access and writes it back on mutation, which is simple and predictable for the target workload.
 
 ## Supported Commands
 
-| Command | Status | Syntax |
-|---------|--------|--------|
-| `USE` | ✅ | `USE <database>;` |
-| `CREATE DATABASE` | ✅ | `CREATE DATABASE <name>;` |
-| `DROP DATABASE` | ✅ | `DROP DATABASE <name>;` |
-| `CREATE TABLE` | ✅ | `CREATE TABLE <name> (<col1>, <col2>, ...);` |
-| `DROP TABLE` | ✅ | `DROP TABLE <name>;` |
-| `INSERT` | ✅ | `INSERT INTO <table> VALUES (<v1>, <v2>, ...);` |
-| `SELECT` | ✅ | `SELECT <*\|cols> FROM <table> [WHERE <cond>];` |
-| `UPDATE` | ✅ | `UPDATE <table> SET <col>=<val> WHERE <cond>;` |
-| `DELETE` | ✅ | `DELETE FROM <table> WHERE <cond>;` |
-| `JOIN` | ✅ | `JOIN <t1> AND <t2> ON <attr1> AND <attr2>;` |
-| `ALTER` | ✅ | `ALTER TABLE <name> ADD\|DROP <attribute>;` |
+| Command | Syntax |
+|---------|--------|
+| `USE` | `USE <database>;` |
+| `CREATE DATABASE` | `CREATE DATABASE <name>;` |
+| `DROP DATABASE` | `DROP DATABASE <name>;` |
+| `CREATE TABLE` | `CREATE TABLE <name> (<col1>, <col2>, ...);` |
+| `DROP TABLE` | `DROP TABLE <name>;` |
+| `INSERT` | `INSERT INTO <table> VALUES (<v1>, <v2>, ...);` |
+| `SELECT` | `SELECT <*|cols> FROM <table> [WHERE <cond>];` |
+| `UPDATE` | `UPDATE <table> SET <col>=<val> WHERE <cond>;` |
+| `DELETE` | `DELETE FROM <table> WHERE <cond>;` |
+| `JOIN` | `JOIN <t1> AND <t2> ON <attr1> AND <attr2>;` |
+| `ALTER` | `ALTER TABLE <name> ADD|DROP <attribute>;` |
 
-### WHERE Conditions (SELECT)
+All 11 commands are fully implemented. Every response begins with `[OK]` or `[ERROR]`.
+
+### WHERE Conditions
 
 Supports `==`, `!=`, `>`, `<`, `>=`, `<=`, `LIKE` (with `%` wildcards), combined with `AND`/`OR`. Numeric and string comparison with automatic type detection.
 
@@ -73,7 +81,7 @@ SELECT name FROM users WHERE name LIKE 'S%';
 - Java 17+
 - Maven (wrapper included: `./mvnw`)
 
-### Build & Test
+### Build and Test
 ```bash
 ./mvnw compile
 ./mvnw test
@@ -107,15 +115,15 @@ SQL:> INSERT INTO marks VALUES ('Charlie', 55, 'C');
 [OK]
 SQL:> SELECT * FROM marks;
 [OK]
-id	name	score	grade
-1	Alice	92	A
-2	Bob	74	B
-3	Charlie	55	C
+id      name    score   grade
+1       Alice   92      A
+2       Bob     74      B
+3       Charlie 55      C
 SQL:> SELECT name, score FROM marks WHERE score >= 70;
 [OK]
-name	score
-Alice	92
-Bob	74
+name    score
+Alice   92
+Bob     74
 ```
 
 ## Project Structure
@@ -124,34 +132,28 @@ Bob	74
 src/main/java/db/engine/
 ├── DBServer.java       # TCP server, entry point
 ├── DBClient.java       # TCP client, REPL interface
-├── QueryParser.java    # BNF-based SQL parser → Command records
+├── QueryParser.java    # BNF-based SQL parser -> Command records
 ├── QueryExecutor.java  # Visitor pattern execution engine
 ├── Table.java          # In-memory table representation
-├── Row.java            # Row (id + column→value map)
+├── Row.java            # Row (id + column-value map)
 ├── Column.java         # Column metadata (name, type, FK refs)
 └── grammar.md          # BNF grammar specification
 
 src/test/java/db/engine/
 ├── ExampleDBTests.java       # Integration tests
-├── ComprehensiveDBTests.java # Full command coverage
+├── ComprehensiveDBTests.java # Full command coverage (28 tests)
 ├── people.tab                # Test fixture
 └── sheds.tab                 # Test fixture (JOIN data)
 ```
 
 ## Response Protocol
 
-Every command returns either `[OK]` or `[ERROR]` on the first line. Query results follow `[OK]` as tab-separated rows. This makes the protocol predictable for any client.
+Every command returns either `[OK]` or `[ERROR]` on the first line. Query results follow `[OK]` as tab-separated rows, with column headers on the first data line. This makes the protocol predictable for any client implementation.
 
 ## Known Limitations
 
-- No index structures — queries are O(n) table scans
+- No index structures: queries are O(n) table scans
 - Single-user: one connection at a time
-- Integer IDs are monotonic (no reuse after deletes)
+- Integer IDs are monotonic with no reuse after deletes
 - No nested WHERE parenthesization (AND/OR are left-associative)
-- JOIN only supports single-column inner joins
-
-## Lessons Learned
-
-- **Separate parse from execute early.** Adding the visitor pattern mid-development was the right call — it eliminated parser-executor coupling and made testing trivial.
-- **Sealed types > enums for commands.** Each command carries different fields (table name, values list, condition string). Sealed records give type safety without forcing everything into a single shape.
-- **File-based persistence is surprisingly robust for single-user workloads.** TSV is human-readable, diffable, and trivial to debug. The trade-off is write amplification on every mutation.
+- JOIN supports single-column inner joins only
