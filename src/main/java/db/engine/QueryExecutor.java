@@ -312,13 +312,18 @@ public class QueryExecutor {
             }
 
             // Group-by aggregation branch
-            if (command.groupByColumn() != null) {
-                String groupCol = findColumnNameIgnoreCase(allColumns, command.groupByColumn());
-                if (groupCol == null) {
-                    return "[ERROR] Unknown column in GROUP BY: " + command.groupByColumn();
-                }
-                if (!projection.contains(groupCol)) {
-                    return "[ERROR] GROUP BY column '" + groupCol + "' must appear in SELECT";
+            if (command.groupByColumns() != null && !command.groupByColumns().isEmpty()) {
+                // Validate all group-by columns exist
+                List<String> groupCols = new ArrayList<>();
+                for (String gcol : command.groupByColumns()) {
+                    String actual = findColumnNameIgnoreCase(allColumns, gcol);
+                    if (actual == null) {
+                        return "[ERROR] Unknown column in GROUP BY: " + gcol;
+                    }
+                    if (!projection.contains(actual)) {
+                        return "[ERROR] GROUP BY column '" + actual + "' must appear in SELECT";
+                    }
+                    groupCols.add(actual);
                 }
 
                 String aggFn = command.aggregateFunction();
@@ -326,11 +331,16 @@ public class QueryExecutor {
                     return "[ERROR] SELECT with GROUP BY requires an aggregate function (COUNT, SUM, AVG)";
                 }
 
-                // Group rows by the group column value
+                // Group rows by composite key of all group-by column values
                 Map<String, List<Row>> groups = new LinkedHashMap<>();
                 for (Row row : matchingRows) {
-                    String key = row.get(groupCol);
-                    if (key == null || QueryParser.NULL_SENTINEL.equals(key)) key = "";
+                    StringBuilder keyBuilder = new StringBuilder();
+                    for (String gc : groupCols) {
+                        String val = row.get(gc);
+                        if (val == null || QueryParser.NULL_SENTINEL.equals(val)) val = "";
+                        keyBuilder.append(val).append("\t");
+                    }
+                    String key = keyBuilder.toString();
                     groups.computeIfAbsent(key, k -> new ArrayList<>()).add(row);
                 }
 
@@ -339,15 +349,16 @@ public class QueryExecutor {
                 response.append("[OK]");
                 response.append(System.lineSeparator());
 
-                // Header: group column and aggregate label
+                // Header: group columns + aggregate label
                 String aggLabel = aggFn + "(" + (command.aggregateColumn() != null ? command.aggregateColumn() : "*") + ")";
-                response.append(groupCol);
+                response.append(String.join("\t", groupCols));
                 response.append("\t");
                 response.append(aggLabel);
 
                 for (Map.Entry<String, List<Row>> entry : groups.entrySet()) {
                     response.append(System.lineSeparator());
-                    response.append(entry.getKey());
+                    // Composite key already has tab-separated values
+                    response.append(entry.getKey().trim());
                     response.append("\t");
 
                     List<Row> groupRows = entry.getValue();
@@ -401,30 +412,43 @@ public class QueryExecutor {
             response.append(System.lineSeparator());
             response.append(String.join("\t", projection));
 
-            // Apply ORDER BY if specified
-            if (command.orderByColumn() != null) {
-                String orderCol = findColumnNameIgnoreCase(allColumns, command.orderByColumn());
-                if (orderCol == null) {
-                    return "[ERROR] Unknown column in ORDER BY: " + command.orderByColumn();
-                }
-                final String sortColumn = orderCol;
-                boolean descending = command.orderByDesc();
-
-                matchingRows.sort((a, b) -> {
-                    String valA = sortColumn.equalsIgnoreCase("id") ? String.valueOf(a.getId()) : a.get(sortColumn);
-                    String valB = sortColumn.equalsIgnoreCase("id") ? String.valueOf(b.getId()) : b.get(sortColumn);
-                    if (valA == null || QueryParser.NULL_SENTINEL.equals(valA)) valA = "";
-                    if (valB == null || QueryParser.NULL_SENTINEL.equals(valB)) valB = "";
-
-                    Double numA = tryParseDouble(valA);
-                    Double numB = tryParseDouble(valB);
-                    int cmp;
-                    if (numA != null && numB != null) {
-                        cmp = numA.compareTo(numB);
-                    } else {
-                        cmp = valA.compareTo(valB);
+            // Apply ORDER BY if specified (multi-column support)
+            if (command.orderByColumns() != null && !command.orderByColumns().isEmpty()) {
+                // Validate all order-by columns exist
+                List<String> sortColumns = new ArrayList<>();
+                for (String col : command.orderByColumns()) {
+                    String actual = findColumnNameIgnoreCase(allColumns, col);
+                    if (actual == null) {
+                        return "[ERROR] Unknown column in ORDER BY: " + col;
                     }
-                    return descending ? -cmp : cmp;
+                    sortColumns.add(actual);
+                }
+
+                List<Boolean> descList = command.orderByDescList();
+                matchingRows.sort((a, b) -> {
+                    for (int ci = 0; ci < sortColumns.size(); ci++) {
+                        String sortColumn = sortColumns.get(ci);
+                        boolean descending = ci < descList.size() && descList.get(ci);
+
+                        String valA = sortColumn.equalsIgnoreCase("id") ? String.valueOf(a.getId()) : a.get(sortColumn);
+                        String valB = sortColumn.equalsIgnoreCase("id") ? String.valueOf(b.getId()) : b.get(sortColumn);
+                        if (valA == null || QueryParser.NULL_SENTINEL.equals(valA)) valA = "";
+                        if (valB == null || QueryParser.NULL_SENTINEL.equals(valB)) valB = "";
+
+                        Double numA = tryParseDouble(valA);
+                        Double numB = tryParseDouble(valB);
+                        int cmp;
+                        if (numA != null && numB != null) {
+                            cmp = numA.compareTo(numB);
+                        } else {
+                            cmp = valA.compareTo(valB);
+                        }
+
+                        if (cmp != 0) {
+                            return descending ? -cmp : cmp;
+                        }
+                    }
+                    return 0;
                 });
             }
 

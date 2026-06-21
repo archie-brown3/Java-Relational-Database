@@ -101,8 +101,8 @@ public class QueryParser {
     }
 
     public record SelectCommand(List<String> selectedAttributes, String tableName, String rawCondition,
-                                String orderByColumn, boolean orderByDesc,
-                                String groupByColumn, String aggregateFunction, String aggregateColumn,
+                                List<String> orderByColumns, List<Boolean> orderByDescList,
+                                List<String> groupByColumns, String aggregateFunction, String aggregateColumn,
                                 boolean distinct, int limitCount, int offsetCount) implements Command {
         @Override
         public <R> R accept(CommandVisitor<R> visitor) {
@@ -570,22 +570,25 @@ public class QueryParser {
         }
 
         // Parse GROUP BY
-        String groupByColumn = null;
+        List<String> groupByColumns = new ArrayList<>();
         if (groupByPart != null) {
             if (groupByPart.isEmpty()) {
                 throw new IllegalArgumentException("GROUP BY requires a column name");
             }
-            groupByColumn = groupByPart.trim();
+            String[] cols = groupByPart.trim().split("\\s*,\\s*");
+            for (String col : cols) {
+                groupByColumns.add(col.trim());
+            }
         }
 
         // Parse ORDER BY (skip if orderByPart starts with LIMIT — it's LIMIT data, not ORDER BY)
-        String orderByColumn = null;
-        boolean orderByDesc = false;
+        List<String> orderByColumns = new ArrayList<>();
+        List<Boolean> orderByDescList = new ArrayList<>();
         if (orderByPart != null && !orderByPart.toUpperCase().startsWith("LIMIT ")) {
             if (orderByPart.isEmpty()) {
                 throw new IllegalArgumentException("ORDER BY requires a column name");
             }
-            // Split LIMIT/OFFSET from ORDER BY
+            // Split LIMIT/OFFSET from ORDER BY first
             String orderByClean = orderByPart;
             String limitPart = null;
             int limitIdx = orderByPart.toUpperCase().lastIndexOf(" LIMIT ");
@@ -593,15 +596,22 @@ public class QueryParser {
                 orderByClean = orderByPart.substring(0, limitIdx).trim();
                 limitPart = orderByPart.substring(limitIdx + " LIMIT ".length()).trim();
             }
-            String[] orderParts = orderByClean.split("\\s+", 2);
-            orderByColumn = orderParts[0];
-            if (orderParts.length > 1) {
-                String direction = orderParts[1].toUpperCase();
-                if ("DESC".equals(direction)) {
-                    orderByDesc = true;
-                } else if (!"ASC".equals(direction)) {
-                    throw new IllegalArgumentException("Invalid ORDER BY direction: " + orderParts[1]);
+            // Parse comma-separated column+direction pairs
+            String[] pairs = orderByClean.split("\\s*,\\s*");
+            for (String pair : pairs) {
+                pair = pair.trim();
+                String[] parts = pair.split("\\s+", 2);
+                orderByColumns.add(parts[0]);
+                boolean desc = false;
+                if (parts.length > 1) {
+                    String direction = parts[1].toUpperCase();
+                    if ("DESC".equals(direction)) {
+                        desc = true;
+                    } else if (!"ASC".equals(direction)) {
+                        throw new IllegalArgumentException("Invalid ORDER BY direction: " + parts[1]);
+                    }
                 }
+                orderByDescList.add(desc);
             }
             if (limitPart != null) {
                 leftoverLimitPart = "LIMIT " + limitPart;
@@ -638,7 +648,7 @@ public class QueryParser {
         }
 
         return new SelectCommand(selectedAttributes, tableName, rawCondition,
-                                 orderByColumn, orderByDesc, groupByColumn, aggregateFunction, aggregateColumn,
+                                 orderByColumns, orderByDescList, groupByColumns, aggregateFunction, aggregateColumn,
                                  distinct, limitCount, offsetCount);
     }
 

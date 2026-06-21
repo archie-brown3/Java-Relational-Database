@@ -6,6 +6,8 @@ import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 
 public class ComprehensiveDBTests {
 
@@ -795,6 +797,104 @@ public class ComprehensiveDBTests {
         assertTrue(lines.length == 3, "IS NOT NULL should return exactly 1 data row, got " + (lines.length - 2) + ": " + r);
     }
 
+    // ─── MULTI-COLUMN ORDER BY ────────────────────────────────────────
+
+    @Test
+    public void testOrderByTwoColumnsSameDirection() {
+        String db = randomName();
+        sendCommandToServer("CREATE DATABASE " + db + ";");
+        sendCommandToServer("USE " + db + ";");
+        sendCommandToServer("CREATE TABLE t (a, b);");
+        sendCommandToServer("INSERT INTO t VALUES ('x', '2');");
+        sendCommandToServer("INSERT INTO t VALUES ('x', '1');");
+        sendCommandToServer("INSERT INTO t VALUES ('y', '3');");
+        sendCommandToServer("INSERT INTO t VALUES ('x', '3');");
+        // ORDER BY a ASC, b ASC — ties on a should be resolved by b
+        String r = sendCommandToServer("SELECT * FROM t ORDER BY a ASC, b ASC;");
+        assertTrue(r.startsWith("[OK]"), "Two-column ORDER BY should return [OK]: " + r);
+        // Check ordering: the log expected order is rows with a=x sorted by b, then a=y
+        // Data rows in expected order: (1,x,1), (2,x,2), (4,x,3), (3,y,3)
+        // Find positions by looking for tab-separated 'x' and '1', 'x' and '2', etc.
+        // Simpler: check that the b-values in rows with a='x' appear in ascending order
+        String[] lines = r.split(System.lineSeparator());
+        // lines[0] = [OK], lines[1] = header, lines[2+] = data
+        List<String> bValues = new ArrayList<>();
+        for (int i = 2; i < lines.length; i++) {
+            String[] cols = lines[i].split("\t");
+            // col[0]=id, col[1]=a, col[2]=b
+            if (cols.length >= 3 && "x".equals(cols[1])) {
+                bValues.add(cols[2]);
+            }
+        }
+        assertTrue(bValues.size() == 3, "Should have 3 rows with a=x: " + r);
+        assertTrue(bValues.get(0).compareTo(bValues.get(1)) <= 0, "b values for a=x should be sorted: " + bValues);
+        assertTrue(bValues.get(1).compareTo(bValues.get(2)) <= 0, "b values for a=x should be sorted: " + bValues);
+    }
+
+    @Test
+    public void testOrderByTwoColumnsMixedDirection() {
+        String db = randomName();
+        sendCommandToServer("CREATE DATABASE " + db + ";");
+        sendCommandToServer("USE " + db + ";");
+        sendCommandToServer("CREATE TABLE t (name, score);");
+        sendCommandToServer("INSERT INTO t VALUES ('Alice', '10');");
+        sendCommandToServer("INSERT INTO t VALUES ('Bob', '20');");
+        sendCommandToServer("INSERT INTO t VALUES ('Alice', '30');");
+        sendCommandToServer("INSERT INTO t VALUES ('Bob', '5');");
+        // ORDER BY name ASC, score DESC
+        String r = sendCommandToServer("SELECT * FROM t ORDER BY name ASC, score DESC;");
+        assertTrue(r.startsWith("[OK]"), "Mixed direction ORDER BY should return [OK]: " + r);
+        // Alice rows first (ASC), then Bob rows. Within Alice: 30 before 10 (DESC). Within Bob: 20 before 5 (DESC)
+        int alice30 = r.indexOf("30");
+        int alice10 = r.indexOf("10");
+        int bob20 = r.indexOf("20");
+        int bob5 = r.indexOf("5");
+        assertTrue(alice30 > 0 && alice10 > 0 && bob20 > 0 && bob5 > 0, "All values should appear");
+        assertTrue(alice30 < alice10, "For Alice, score=30 should come before score=10 (DESC): " + r);
+        assertTrue(alice10 < bob20, "Alice rows should come before Bob rows (name ASC): " + r);
+        assertTrue(bob20 < bob5, "For Bob, score=20 should come before score=5 (DESC): " + r);
+    }
+
+    @Test
+    public void testOrderByThreeColumns() {
+        String db = randomName();
+        sendCommandToServer("CREATE DATABASE " + db + ";");
+        sendCommandToServer("USE " + db + ";");
+        sendCommandToServer("CREATE TABLE t (x, y, z);");
+        sendCommandToServer("INSERT INTO t VALUES ('a', '1', 'X');");
+        sendCommandToServer("INSERT INTO t VALUES ('a', '1', 'A');");
+        sendCommandToServer("INSERT INTO t VALUES ('a', '2', 'B');");
+        sendCommandToServer("INSERT INTO t VALUES ('b', '1', 'C');");
+        // ORDER BY x ASC, y ASC, z ASC
+        String r = sendCommandToServer("SELECT * FROM t ORDER BY x ASC, y ASC, z ASC;");
+        assertTrue(r.startsWith("[OK]"), "Three-column ORDER BY should return [OK]: " + r);
+        // Expected: a,1,A  a,1,X  a,2,B  b,1,C
+        int a1A = r.indexOf("A");
+        int a1X = r.indexOf("X");
+        int a2B = r.indexOf("B");
+        int b1C = r.indexOf("C");
+        assertTrue(a1A > 0 && a1X > 0 && a2B > 0 && b1C > 0, "All values should appear");
+        assertTrue(a1A < a1X, "For a,1: z=A before z=X (ASC): " + r);
+        assertTrue(a1X < a2B, "For a: y=1 rows before y=2 rows (ASC): " + r);
+        assertTrue(a2B < b1C, "a rows before b rows (x ASC): " + r);
+    }
+
+    @Test
+    public void testOrderByWithLimit() {
+        String db = randomName();
+        sendCommandToServer("CREATE DATABASE " + db + ";");
+        sendCommandToServer("USE " + db + ";");
+        sendCommandToServer("CREATE TABLE t (a, b);");
+        sendCommandToServer("INSERT INTO t VALUES ('x', '3');");
+        sendCommandToServer("INSERT INTO t VALUES ('x', '1');");
+        sendCommandToServer("INSERT INTO t VALUES ('y', '2');");
+        // ORDER BY a ASC, b DESC LIMIT 2 — only top 2 rows
+        String r = sendCommandToServer("SELECT * FROM t ORDER BY a ASC, b DESC LIMIT 2;");
+        assertTrue(r.startsWith("[OK]"), "Multi ORDER BY + LIMIT should work: " + r);
+        String[] lines = r.split(System.lineSeparator());
+        assertTrue(lines.length == 4, "[OK] + header + 2 rows = 4 lines, got " + lines.length + ": " + r);
+    }
+
     private int countOccurrences(String haystack, String needle) {
         int count = 0;
         int idx = 0;
@@ -803,5 +903,40 @@ public class ComprehensiveDBTests {
             idx += needle.length();
         }
         return count;
+    }
+
+    // ─── MULTI-COLUMN GROUP BY ────────────────────────────────────────
+
+    @Test
+    public void testGroupByTwoColumnsCount() {
+        String db = randomName();
+        sendCommandToServer("CREATE DATABASE " + db + ";");
+        sendCommandToServer("USE " + db + ";");
+        sendCommandToServer("CREATE TABLE log (region, status);");
+        sendCommandToServer("INSERT INTO log VALUES ('East', 'OK');");
+        sendCommandToServer("INSERT INTO log VALUES ('East', 'FAIL');");
+        sendCommandToServer("INSERT INTO log VALUES ('East', 'OK');");
+        sendCommandToServer("INSERT INTO log VALUES ('West', 'OK');");
+        sendCommandToServer("INSERT INTO log VALUES ('West', 'FAIL');");
+        String r = sendCommandToServer("SELECT region, status, COUNT(*) FROM log GROUP BY region, status ORDER BY region ASC, status ASC;");
+        assertTrue(r.startsWith("[OK]"), "Multi-column GROUP BY should return [OK]: " + r);
+        // Groups: (East, FAIL)=1, (East, OK)=2, (West, FAIL)=1, (West, OK)=1
+        assertTrue(r.contains("East") && r.contains("OK") && r.contains("2"), "East/OK count should be 2: " + r);
+        assertTrue(r.contains("East") && r.contains("FAIL") && r.contains("1"), "East/FAIL count should be 1: " + r);
+    }
+
+    @Test
+    public void testGroupByTwoColumnsSum() {
+        String db = randomName();
+        sendCommandToServer("CREATE DATABASE " + db + ";");
+        sendCommandToServer("USE " + db + ";");
+        sendCommandToServer("CREATE TABLE rev (product, quarter, amount);");
+        sendCommandToServer("INSERT INTO rev VALUES ('A', 'Q1', '100');");
+        sendCommandToServer("INSERT INTO rev VALUES ('A', 'Q1', '50');");
+        sendCommandToServer("INSERT INTO rev VALUES ('A', 'Q2', '200');");
+        String r = sendCommandToServer("SELECT product, quarter, SUM(amount) FROM rev GROUP BY product, quarter;");
+        assertTrue(r.startsWith("[OK]"), "Multi-column GROUP BY SUM should return [OK]: " + r);
+        assertTrue(r.contains("150"), "A/Q1 SUM should be 150: " + r);
+        assertTrue(r.contains("200"), "A/Q2 SUM should be 200: " + r);
     }
 }
