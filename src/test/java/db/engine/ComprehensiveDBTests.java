@@ -1034,4 +1034,39 @@ public class ComprehensiveDBTests {
         assertTrue(r.startsWith("[OK]"), "RIGHT JOIN all-match should return [OK]: " + r);
         assertTrue(r.contains("1") && r.contains("2"), "Both joined values should appear: " + r);
     }
+
+    // ─── HAVING ──────────────────────────────────────────────────────
+
+    @Test
+    public void testHavingCountGreaterThan() {
+        String db = randomName();
+        sendCommandToServer("CREATE DATABASE " + db + ";");
+        sendCommandToServer("USE " + db + ";");
+        sendCommandToServer("CREATE TABLE sales (product);");
+        sendCommandToServer("INSERT INTO sales VALUES ('A');");
+        sendCommandToServer("INSERT INTO sales VALUES ('A');");
+        sendCommandToServer("INSERT INTO sales VALUES ('A');");
+        sendCommandToServer("INSERT INTO sales VALUES ('B');");
+        sendCommandToServer("INSERT INTO sales VALUES ('B');");
+        String r = sendCommandToServer("SELECT product, COUNT(*) FROM sales GROUP BY product HAVING COUNT(*) > 2;");
+        assertTrue(r.startsWith("[OK]"), "HAVING should return [OK]: " + r);
+        assertTrue(r.contains("A") && r.contains("3"), "A with count 3 should appear: " + r);
+        assertFalse(r.contains("B"), "B with count 2 should be excluded: " + r);
+    }
+
+    @Test
+    public void testHavingSumFilter() {
+        String db = randomName();
+        sendCommandToServer("CREATE DATABASE " + db + ";");
+        sendCommandToServer("USE " + db + ";");
+        sendCommandToServer("CREATE TABLE orders (dept, amount);");
+        sendCommandToServer("INSERT INTO orders VALUES ('Sales', '100');");
+        sendCommandToServer("INSERT INTO orders VALUES ('Sales', '50');");
+        sendCommandToServer("INSERT INTO orders VALUES ('Eng', '200');");
+        sendCommandToServer("INSERT INTO orders VALUES ('Eng', '100');");
+        String r = sendCommandToServer("SELECT dept, SUM(amount) FROM orders GROUP BY dept HAVING SUM(amount) >= 200;");
+        assertTrue(r.startsWith("[OK]"), "HAVING with SUM should return [OK]: " + r);
+        assertTrue(r.contains("Eng") && r.contains("300"), "Eng with sum 300 should appear: " + r);
+        assertFalse(r.contains("Sales"), "Sales with sum 150 should be excluded: " + r);
+    }
 }

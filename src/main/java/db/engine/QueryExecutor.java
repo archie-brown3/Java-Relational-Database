@@ -356,11 +356,6 @@ public class QueryExecutor {
                 response.append(aggLabel);
 
                 for (Map.Entry<String, List<Row>> entry : groups.entrySet()) {
-                    response.append(System.lineSeparator());
-                    // Composite key already has tab-separated values
-                    response.append(entry.getKey().trim());
-                    response.append("\t");
-
                     List<Row> groupRows = entry.getValue();
                     String aggResult = switch (aggFn) {
                         case "COUNT" -> String.valueOf(groupRows.size());
@@ -400,6 +395,55 @@ public class QueryExecutor {
                         }
                         default -> throw new IllegalArgumentException("Unknown aggregate function: " + aggFn);
                     };
+
+                    // HAVING filter: build a temporary row with group columns + aggregate result,
+                    // then evaluate the HAVING condition against it
+                    if (command.havingCondition() != null && !command.havingCondition().isBlank()) {
+                        Map<String, String> tempData = new LinkedHashMap<>();
+                        String[] keyParts = entry.getKey().trim().split("\t");
+                        for (int ki = 0; ki < groupCols.size(); ki++) {
+                            tempData.put(groupCols.get(ki), ki < keyParts.length ? keyParts[ki] : "");
+                        }
+                        // Aggregate column name for HAVING reference
+                        String aggRefName = aggFn.toLowerCase() + "_result";
+                        tempData.put(aggRefName, aggResult);
+                        // Also put the original aggregate column name if there is one
+                        if (command.aggregateColumn() != null) {
+                            tempData.put(aggFn + "(" + command.aggregateColumn() + ")", aggResult);
+                        }
+                        if (command.aggregateColumn() == null) {
+                            tempData.put("COUNT(*)", aggResult);
+                        }
+
+                        Table tempTable = new Table("_having_tmp", new ArrayList<>());
+                        for (String gc : groupCols) {
+                            tempTable.addColumn(new Column(gc));
+                        }
+                        tempTable.addColumn(new Column(aggRefName));
+                        Row tempRow = tempTable.insertRow(tempData);
+
+                        // Rewrite HAVING condition: replace aggregate references
+                        String havingCond = command.havingCondition();
+                        if (command.aggregateColumn() != null) {
+                            String aggRef = aggFn + "(" + command.aggregateColumn() + ")";
+                            havingCond = havingCond.replaceAll("(?i)" + Pattern.quote(aggRef), aggRefName);
+                        }
+                        if (command.aggregateColumn() == null && "COUNT".equals(aggFn)) {
+                            havingCond = havingCond.replaceAll("(?i)COUNT\\(\\*\\)", aggRefName);
+                        }
+
+                        boolean passes;
+                        try {
+                            passes = matchesRawCondition(tempTable, tempRow, havingCond);
+                        } catch (IllegalArgumentException e) {
+                            return "[ERROR] Invalid HAVING condition: " + e.getMessage();
+                        }
+                        if (!passes) continue;
+                    }
+
+                    response.append(System.lineSeparator());
+                    response.append(entry.getKey().trim());
+                    response.append("\t");
                     response.append(aggResult);
                 }
 
@@ -823,7 +867,7 @@ public class QueryExecutor {
                 return isNullHelper(table, row, colName, false);
             }
 
-            Pattern pattern = Pattern.compile("^([A-Za-z0-9]+)\\s*(==|!=|>=|<=|>|<|(?i:LIKE))\\s*(.+)$");
+            Pattern pattern = Pattern.compile("^([A-Za-z0-9_]+)\\s*(==|!=|>=|<=|>|<|(?i:LIKE))\\s*(.+)$");
             Matcher matcher = pattern.matcher(trimmedCondition);
             if (!matcher.matches()) {
                 throw new IllegalArgumentException("Unsupported WHERE condition: " + condition);

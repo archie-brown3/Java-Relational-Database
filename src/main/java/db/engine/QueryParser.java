@@ -103,7 +103,8 @@ public class QueryParser {
     public record SelectCommand(List<String> selectedAttributes, String tableName, String rawCondition,
                                 List<String> orderByColumns, List<Boolean> orderByDescList,
                                 List<String> groupByColumns, String aggregateFunction, String aggregateColumn,
-                                boolean distinct, int limitCount, int offsetCount) implements Command {
+                                boolean distinct, int limitCount, int offsetCount,
+                                String havingCondition) implements Command {
         @Override
         public <R> R accept(CommandVisitor<R> visitor) {
             return visitor.visit(this);
@@ -570,13 +571,21 @@ public class QueryParser {
             rawCondition = wherePart;
         }
 
-        // Parse GROUP BY
+        // Parse GROUP BY — also strip HAVING clause
         List<String> groupByColumns = new ArrayList<>();
+        String havingCondition = null;
         if (groupByPart != null) {
             if (groupByPart.isEmpty()) {
                 throw new IllegalArgumentException("GROUP BY requires a column name");
             }
-            String[] cols = groupByPart.trim().split("\\s*,\\s*");
+            // Split HAVING from GROUP BY
+            String groupByClean = groupByPart.trim();
+            int havingIdx = groupByClean.toUpperCase().lastIndexOf(" HAVING ");
+            if (havingIdx >= 0) {
+                havingCondition = groupByClean.substring(havingIdx + " HAVING ".length()).trim();
+                groupByClean = groupByClean.substring(0, havingIdx).trim();
+            }
+            String[] cols = groupByClean.split("\\s*,\\s*");
             for (String col : cols) {
                 groupByColumns.add(col.trim());
             }
@@ -650,7 +659,7 @@ public class QueryParser {
 
         return new SelectCommand(selectedAttributes, tableName, rawCondition,
                                  orderByColumns, orderByDescList, groupByColumns, aggregateFunction, aggregateColumn,
-                                 distinct, limitCount, offsetCount);
+                                 distinct, limitCount, offsetCount, havingCondition);
     }
 
     private static Command parseUpdate(String command) {
