@@ -147,6 +147,7 @@ public class QueryParser {
             case "DELETE" -> parseDelete(command);
             case "JOIN" -> parseJoin(command, false);
             case "LEFT" -> parseJoin(command, true);
+            case "RIGHT" -> parseJoinRight(command);
             default -> throw new IllegalArgumentException("Unknown command type: " + keyword);
         };
     }
@@ -735,6 +736,48 @@ public class QueryParser {
         }
 
         return new DeleteCommand(tableName, conditionRaw);
+    }
+
+    private static Command parseJoinRight(String command) {
+        // RIGHT JOIN is LEFT JOIN with tables and attributes swapped.
+        // Parse as a normal JOIN first, then swap sides.
+        String trimmed = command.trim();
+        String upper = trimmed.toUpperCase();
+
+        if (!upper.startsWith("RIGHT JOIN ")) {
+            throw new IllegalArgumentException("Invalid RIGHT JOIN syntax.");
+        }
+
+        String rest = trimmed.substring("RIGHT JOIN ".length()).trim();
+
+        int andIndex = rest.toUpperCase().indexOf(" AND ");
+        if (andIndex < 0) {
+            throw new IllegalArgumentException("Invalid JOIN syntax. Missing AND between table names");
+        }
+
+        String leftTable = rest.substring(0, andIndex).trim();
+        leftTable = validateIdentifier(leftTable, "table");
+
+        String afterAnd = rest.substring(andIndex + " AND ".length()).trim();
+        int onIndex = afterAnd.toUpperCase().indexOf(" ON ");
+        if (onIndex < 0) {
+            throw new IllegalArgumentException("Invalid JOIN syntax. Missing ON clause");
+        }
+
+        String rightTable = afterAnd.substring(0, onIndex).trim();
+        rightTable = validateIdentifier(rightTable, "table");
+
+        String onClause = afterAnd.substring(onIndex + " ON ".length()).trim();
+        String[] onParts = onClause.split("(?i)\\s+AND\\s+", 2);
+        if (onParts.length < 2) {
+            throw new IllegalArgumentException("Invalid JOIN syntax. ON clause must have two attributes separated by AND");
+        }
+
+        String leftAttribute = validateIdentifier(onParts[0].trim(), "attribute");
+        String rightAttribute = validateIdentifier(onParts[1].trim(), "attribute");
+
+        // Swap: left↔right tables and attributes, then execute as LEFT JOIN
+        return new JoinCommand(rightTable, leftTable, rightAttribute, leftAttribute, true);
     }
 
     private static Command parseJoin(String command, boolean leftJoin) {

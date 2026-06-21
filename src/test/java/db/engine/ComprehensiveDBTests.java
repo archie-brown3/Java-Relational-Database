@@ -999,4 +999,39 @@ public class ComprehensiveDBTests {
         String r = sendCommandToServer("SELECT * FROM t WHERE (x == '1';");
         assertTrue(r.startsWith("[ERROR]"), "Unmatched parenthesis should error: " + r);
     }
+
+    // ─── RIGHT JOIN ──────────────────────────────────────────────────
+
+    @Test
+    public void testRightJoinUnmatchedRows() {
+        String db = randomName();
+        sendCommandToServer("CREATE DATABASE " + db + ";");
+        sendCommandToServer("USE " + db + ";");
+        sendCommandToServer("CREATE TABLE depts (code, name);");
+        sendCommandToServer("INSERT INTO depts VALUES ('CS', 'CompSci');");
+        sendCommandToServer("INSERT INTO depts VALUES ('MATH', 'Mathematics');");
+        sendCommandToServer("CREATE TABLE students (name, dept_code);");
+        sendCommandToServer("INSERT INTO students VALUES ('Alice', 'CS');");
+        // RIGHT JOIN: depts is right table — all depts appear even without students
+        String r = sendCommandToServer("RIGHT JOIN students AND depts ON dept_code AND code;");
+        assertTrue(r.startsWith("[OK]"), "RIGHT JOIN should return [OK]: " + r);
+        assertTrue(r.contains("CompSci"), "CS dept should appear: " + r);
+        assertTrue(r.contains("Mathematics"), "MATH dept should appear (unmatched right): " + r);
+    }
+
+    @Test
+    public void testRightJoinAllMatch() {
+        String db = randomName();
+        sendCommandToServer("CREATE DATABASE " + db + ";");
+        sendCommandToServer("USE " + db + ";");
+        sendCommandToServer("CREATE TABLE a (x);");
+        sendCommandToServer("INSERT INTO a VALUES ('1');");
+        sendCommandToServer("INSERT INTO a VALUES ('2');");
+        sendCommandToServer("CREATE TABLE b (y);");
+        sendCommandToServer("INSERT INTO b VALUES ('1');");
+        sendCommandToServer("INSERT INTO b VALUES ('2');");
+        String r = sendCommandToServer("RIGHT JOIN a AND b ON x AND y;");
+        assertTrue(r.startsWith("[OK]"), "RIGHT JOIN all-match should return [OK]: " + r);
+        assertTrue(r.contains("1") && r.contains("2"), "Both joined values should appear: " + r);
+    }
 }
