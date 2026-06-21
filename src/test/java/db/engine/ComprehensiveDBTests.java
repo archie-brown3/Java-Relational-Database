@@ -584,6 +584,82 @@ public class ComprehensiveDBTests {
         assertTrue(r.startsWith("[OK]"), "DISTINCT on empty table should return [OK]: " + r);
     }
 
+    // ─── LIMIT / OFFSET ──────────────────────────────────────────────
+
+    @Test
+    public void testLimitBasic() {
+        String db = randomName();
+        sendCommandToServer("CREATE DATABASE " + db + ";");
+        sendCommandToServer("USE " + db + ";");
+        sendCommandToServer("CREATE TABLE nums (val);");
+        for (int i = 1; i <= 5; i++) {
+            sendCommandToServer("INSERT INTO nums VALUES ('" + i + "');");
+        }
+        String r = sendCommandToServer("SELECT * FROM nums LIMIT 2;");
+        assertTrue(r.startsWith("[OK]"), "LIMIT should return [OK]: " + r);
+        // [OK] + header + 2 data rows = 4 lines
+        String[] lines = r.split(System.lineSeparator());
+        assertTrue(lines.length == 4, "[OK] + header + 2 rows = 4 lines, got " + lines.length + ": " + r);
+    }
+
+    @Test
+    public void testLimitWithOffset() {
+        String db = randomName();
+        sendCommandToServer("CREATE DATABASE " + db + ";");
+        sendCommandToServer("USE " + db + ";");
+        sendCommandToServer("CREATE TABLE items (n);");
+        for (int i = 1; i <= 5; i++) {
+            sendCommandToServer("INSERT INTO items VALUES ('" + i + "');");
+        }
+        String r = sendCommandToServer("SELECT * FROM items LIMIT 2 OFFSET 1;");
+        assertTrue(r.startsWith("[OK]"), "LIMIT OFFSET should return [OK]: " + r);
+        // [OK] + header + 2 data rows = 4 lines. Values 2 and 3 should appear.
+        String[] lines = r.split(System.lineSeparator());
+        assertTrue(lines.length == 4, "[OK] + header + 2 rows = 4 lines, got " + lines.length + ": " + r);
+        assertTrue(r.contains("2") && r.contains("3"), "Should contain values 2 and 3: " + r);
+        assertFalse(r.contains("\t1\n") && !r.contains("\t1\t"), "Should NOT contain value 1 (offset skipped it): " + r);
+    }
+
+    @Test
+    public void testLimitZero() {
+        String db = randomName();
+        sendCommandToServer("CREATE DATABASE " + db + ";");
+        sendCommandToServer("USE " + db + ";");
+        sendCommandToServer("CREATE TABLE t (x);");
+        sendCommandToServer("INSERT INTO t VALUES ('hello');");
+        String r = sendCommandToServer("SELECT * FROM t LIMIT 0;");
+        assertTrue(r.startsWith("[OK]"), "LIMIT 0 should return [OK]: " + r);
+        String[] lines = r.split(System.lineSeparator());
+        assertTrue(lines.length == 2, "LIMIT 0: [OK] + header only = 2 lines. Got " + lines.length + ": " + r);
+    }
+
+    @Test
+    public void testLimitWithOrderBy() {
+        String db = randomName();
+        sendCommandToServer("CREATE DATABASE " + db + ";");
+        sendCommandToServer("USE " + db + ";");
+        sendCommandToServer("CREATE TABLE scores (name, pts);");
+        sendCommandToServer("INSERT INTO scores VALUES ('C', 50);");
+        sendCommandToServer("INSERT INTO scores VALUES ('A', 100);");
+        sendCommandToServer("INSERT INTO scores VALUES ('B', 75);");
+        String r = sendCommandToServer("SELECT * FROM scores ORDER BY pts DESC LIMIT 2;");
+        assertTrue(r.startsWith("[OK]"), "ORDER BY + LIMIT should return [OK]: " + r);
+        String[] lines = r.split(System.lineSeparator());
+        assertTrue(lines.length == 4, "[OK] + header + 2 rows = 4 lines: " + r);
+        // A (100) should come before B (75)
+        assertTrue(r.indexOf("A") < r.indexOf("B"), "A should appear before B: " + r);
+    }
+
+    @Test
+    public void testLimitNegative() {
+        String db = randomName();
+        sendCommandToServer("CREATE DATABASE " + db + ";");
+        sendCommandToServer("USE " + db + ";");
+        sendCommandToServer("CREATE TABLE t (x);");
+        String r = sendCommandToServer("SELECT * FROM t LIMIT -1;");
+        assertTrue(r.startsWith("[ERROR]"), "Negative LIMIT should error: " + r);
+    }
+
     private int countOccurrences(String haystack, String needle) {
         int count = 0;
         int idx = 0;

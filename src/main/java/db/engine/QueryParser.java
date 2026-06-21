@@ -103,7 +103,7 @@ public class QueryParser {
     public record SelectCommand(List<String> selectedAttributes, String tableName, String rawCondition,
                                 String orderByColumn, boolean orderByDesc,
                                 String groupByColumn, String aggregateFunction, String aggregateColumn,
-                                boolean distinct) implements Command {
+                                boolean distinct, int limitCount, int offsetCount) implements Command {
         @Override
         public <R> R accept(CommandVisitor<R> visitor) {
             return visitor.visit(this);
@@ -501,6 +501,7 @@ public class QueryParser {
         String wherePart = null;
         String groupByPart = null;
         String orderByPart = null;
+        String leftoverLimitPart = null;
 
         if (whereIndex >= 0) {
             tablePart = fromTail.substring(0, whereIndex).trim();
@@ -541,7 +542,12 @@ public class QueryParser {
             }
         }
 
-        // Validate table name
+        // Validate table name — strip any LIMIT clause that leaked in
+        int limitInTable = tablePart.toUpperCase().lastIndexOf(" LIMIT ");
+        if (limitInTable >= 0) {
+            leftoverLimitPart = "LIMIT " + tablePart.substring(limitInTable + " LIMIT ".length()).trim();
+            tablePart = tablePart.substring(0, limitInTable).trim();
+        }
         String tableName = validateIdentifier(tablePart, "table");
 
         // Validate WHERE
@@ -562,14 +568,22 @@ public class QueryParser {
             groupByColumn = groupByPart.trim();
         }
 
-        // Parse ORDER BY
+        // Parse ORDER BY (skip if orderByPart starts with LIMIT — it's LIMIT data, not ORDER BY)
         String orderByColumn = null;
         boolean orderByDesc = false;
-        if (orderByPart != null) {
+        if (orderByPart != null && !orderByPart.toUpperCase().startsWith("LIMIT ")) {
             if (orderByPart.isEmpty()) {
                 throw new IllegalArgumentException("ORDER BY requires a column name");
             }
-            String[] orderParts = orderByPart.split("\\s+", 2);
+            // Split LIMIT/OFFSET from ORDER BY
+            String orderByClean = orderByPart;
+            String limitPart = null;
+            int limitIdx = orderByPart.toUpperCase().lastIndexOf(" LIMIT ");
+            if (limitIdx >= 0) {
+                orderByClean = orderByPart.substring(0, limitIdx).trim();
+                limitPart = orderByPart.substring(limitIdx + " LIMIT ".length()).trim();
+            }
+            String[] orderParts = orderByClean.split("\\s+", 2);
             orderByColumn = orderParts[0];
             if (orderParts.length > 1) {
                 String direction = orderParts[1].toUpperCase();
@@ -579,10 +593,43 @@ public class QueryParser {
                     throw new IllegalArgumentException("Invalid ORDER BY direction: " + orderParts[1]);
                 }
             }
+            if (limitPart != null) {
+                leftoverLimitPart = "LIMIT " + limitPart;
+            }
+        }
+
+        // Parse LIMIT/OFFSET
+        int limitCount = -1;
+        int offsetCount = 0;
+        if (leftoverLimitPart != null && !leftoverLimitPart.isEmpty()) {
+            String limitContent = leftoverLimitPart;
+            if (limitContent.toUpperCase().startsWith("LIMIT ")) {
+                limitContent = limitContent.substring("LIMIT ".length()).trim();
+            }
+            String[] limitParts = limitContent.split("\\s+", 3);
+            try {
+                limitCount = Integer.parseInt(limitParts[0]);
+                if (limitCount < 0) {
+                    throw new IllegalArgumentException("LIMIT must be non-negative");
+                }
+            } catch (NumberFormatException e) {
+                throw new IllegalArgumentException("Invalid LIMIT value: " + limitParts[0]);
+            }
+            if (limitParts.length >= 3 && "OFFSET".equalsIgnoreCase(limitParts[1])) {
+                try {
+                    offsetCount = Integer.parseInt(limitParts[2]);
+                    if (offsetCount < 0) {
+                        throw new IllegalArgumentException("OFFSET must be non-negative");
+                    }
+                } catch (NumberFormatException e) {
+                    throw new IllegalArgumentException("Invalid OFFSET value: " + limitParts[2]);
+                }
+            }
         }
 
         return new SelectCommand(selectedAttributes, tableName, rawCondition,
-                                 orderByColumn, orderByDesc, groupByColumn, aggregateFunction, aggregateColumn, distinct);
+                                 orderByColumn, orderByDesc, groupByColumn, aggregateFunction, aggregateColumn,
+                                 distinct, limitCount, offsetCount);
     }
 
     private static Command parseUpdate(String command) {

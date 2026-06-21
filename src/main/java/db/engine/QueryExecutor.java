@@ -441,6 +441,15 @@ public class QueryExecutor {
                 matchingRows = distinctRows;
             }
 
+            // Apply LIMIT/OFFSET after DISTINCT
+            if (command.limitCount() >= 0) {
+                int offset = Math.max(0, command.offsetCount());
+                int limit = command.limitCount();
+                int fromIndex = Math.min(offset, matchingRows.size());
+                int toIndex = Math.min(fromIndex + limit, matchingRows.size());
+                matchingRows = matchingRows.subList(fromIndex, toIndex);
+            }
+
             for (Row row : matchingRows) {
                 List<String> selectedValues = new ArrayList<>();
                 for (String columnName : projection) {
