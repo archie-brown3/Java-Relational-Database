@@ -383,7 +383,7 @@ public class QueryParser {
                 inDoubleQuote = !inDoubleQuote;
                 current.append(c);
             } else if (c == ',' && !inSingleQuote && !inDoubleQuote) {
-                result.add(stripMatchingQuotes(current.toString().trim()));
+                result.add(parseNullValue(stripMatchingQuotes(current.toString().trim())));
                 current.setLength(0);
             } else {
                 current.append(c);
@@ -391,9 +391,19 @@ public class QueryParser {
         }
         // Don't forget the last value
         if (!current.isEmpty()) {
-            result.add(stripMatchingQuotes(current.toString().trim()));
+            result.add(parseNullValue(stripMatchingQuotes(current.toString().trim())));
         }
         return result;
+    }
+
+    /** Convert the string "NULL" (case-insensitive) to the NULL sentinel. */
+    public static final String NULL_SENTINEL = "_@_NULL_SENTINEL_@_";
+
+    private static String parseNullValue(String value) {
+        if ("NULL".equalsIgnoreCase(value)) {
+            return NULL_SENTINEL;
+        }
+        return value;
     }
 
     private static String stripMatchingQuotes(String value) {

@@ -39,7 +39,13 @@ public class Row {
 
     public String[] toArray(List<String> columnOrder) {
         return columnOrder.stream()
-            .map(col -> col.equalsIgnoreCase("id") ? String.valueOf(id) : data.getOrDefault(col, ""))
+            .map(col -> {
+                if (col.equalsIgnoreCase("id")) return String.valueOf(id);
+                String val = data.getOrDefault(col, "");
+                // Serialize NULL sentinel as empty string for backward compatibility
+                if (QueryParser.NULL_SENTINEL.equals(val)) return "";
+                return val;
+            })
             .toArray(String[]::new);
     }
 }

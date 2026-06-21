@@ -330,7 +330,7 @@ public class QueryExecutor {
                 Map<String, List<Row>> groups = new LinkedHashMap<>();
                 for (Row row : matchingRows) {
                     String key = row.get(groupCol);
-                    if (key == null) key = "";
+                    if (key == null || QueryParser.NULL_SENTINEL.equals(key)) key = "";
                     groups.computeIfAbsent(key, k -> new ArrayList<>()).add(row);
                 }
 
@@ -413,8 +413,8 @@ public class QueryExecutor {
                 matchingRows.sort((a, b) -> {
                     String valA = sortColumn.equalsIgnoreCase("id") ? String.valueOf(a.getId()) : a.get(sortColumn);
                     String valB = sortColumn.equalsIgnoreCase("id") ? String.valueOf(b.getId()) : b.get(sortColumn);
-                    if (valA == null) valA = "";
-                    if (valB == null) valB = "";
+                    if (valA == null || QueryParser.NULL_SENTINEL.equals(valA)) valA = "";
+                    if (valB == null || QueryParser.NULL_SENTINEL.equals(valB)) valB = "";
 
                     Double numA = tryParseDouble(valA);
                     Double numB = tryParseDouble(valB);
@@ -464,7 +464,13 @@ public class QueryExecutor {
                     if (columnName.equalsIgnoreCase("id")) {
                         selectedValues.add(String.valueOf(row.getId()));
                     } else {
-                        selectedValues.add(row.get(columnName));
+                        String val = row.get(columnName);
+                        // Display NULL sentinel as empty string
+                        if (QueryParser.NULL_SENTINEL.equals(val)) {
+                            selectedValues.add("");
+                        } else {
+                            selectedValues.add(val);
+                        }
                     }
                 }
 
@@ -609,11 +615,15 @@ public class QueryExecutor {
                 Set<Integer> matchedLeftIds = new HashSet<>();
                 for (Row leftRow : leftTable.getAllRows()) {
                     String leftValue = leftRow.get(leftCol);
-                    if (leftValue == null) leftValue = "";
+                    if (leftValue == null || QueryParser.NULL_SENTINEL.equals(leftValue)) leftValue = "";
+                    // NULL in SQL never matches NULL, but join treats null as ""
+                    // Skip rows where the join key is effectively NULL (no match possible)
+                    if (leftValue.isEmpty()) continue;
 
                     for (Row rightRow : rightTable.getAllRows()) {
                         String rightValue = rightRow.get(rightCol);
-                        if (rightValue == null) rightValue = "";
+                        if (rightValue == null || QueryParser.NULL_SENTINEL.equals(rightValue)) rightValue = "";
+                        if (rightValue.isEmpty()) continue;
 
                         if (leftValue.equals(rightValue)) {
                             matchedLeftIds.add(leftRow.getId());
@@ -623,12 +633,12 @@ public class QueryExecutor {
                             for (String col : leftColumns) {
                                 if ("id".equalsIgnoreCase(col)) continue;
                                 String val = leftRow.get(col);
-                                joinedValues.add(val != null ? val : "");
+                                joinedValues.add(displayValue(val));
                             }
                             for (String col : rightColumns) {
                                 if ("id".equalsIgnoreCase(col)) continue;
                                 String val = rightRow.get(col);
-                                joinedValues.add(val != null ? val : "");
+                                joinedValues.add(displayValue(val));
                             }
                             response.append(String.join("\t", joinedValues));
                         }
@@ -645,7 +655,7 @@ public class QueryExecutor {
                             for (String col : leftColumns) {
                                 if ("id".equalsIgnoreCase(col)) continue;
                                 String val = leftRow.get(col);
-                                joinedValues.add(val != null ? val : "");
+                                joinedValues.add(displayValue(val));
                             }
                             for (String col : rightColumns) {
                                 if ("id".equalsIgnoreCase(col)) continue;
@@ -719,8 +729,20 @@ public class QueryExecutor {
         }
 
         private boolean evaluateSingleCondition(Table table, Row row, String condition) {
+            // Handle IS NULL and IS NOT NULL operators
+            String trimmedCondition = condition.trim();
+            String upperCondition = trimmedCondition.toUpperCase();
+            if (upperCondition.endsWith(" IS NULL")) {
+                String colName = trimmedCondition.substring(0, trimmedCondition.length() - " IS NULL".length()).trim();
+                return isNullHelper(table, row, colName, true);
+            }
+            if (upperCondition.endsWith(" IS NOT NULL")) {
+                String colName = trimmedCondition.substring(0, trimmedCondition.length() - " IS NOT NULL".length()).trim();
+                return isNullHelper(table, row, colName, false);
+            }
+
             Pattern pattern = Pattern.compile("^([A-Za-z0-9]+)\\s*(==|!=|>=|<=|>|<|(?i:LIKE))\\s*(.+)$");
-            Matcher matcher = pattern.matcher(condition.trim());
+            Matcher matcher = pattern.matcher(trimmedCondition);
             if (!matcher.matches()) {
                 throw new IllegalArgumentException("Unsupported WHERE condition: " + condition);
             }
@@ -741,11 +763,36 @@ public class QueryExecutor {
                 leftValue = row.get(columnName);
             }
 
-            if (leftValue == null) {
+            // NULL sentinel handling: NULL != anything in SQL
+            if (leftValue == null || QueryParser.NULL_SENTINEL.equals(leftValue)) {
                 leftValue = "";
+                // For == comparison against non-NULL, NULL never matches (except IS NULL)
+                if ("==".equals(operator)) {
+                    return false;
+                }
+                // For != comparison against anything, NULL is not equal so != should also be false
+                // (SQL semantics: NULL != anything is unknown, treated as false)
+                if ("!=".equals(operator)) {
+                    return false;
+                }
             }
 
             return compareValues(leftValue, operator, rightRaw);
+        }
+
+        private boolean isNullHelper(Table table, Row row, String columnName, boolean expectNull) {
+            String actualCol = findColumnNameIgnoreCase(table.getColumnNames(), columnName);
+            if (actualCol == null) {
+                throw new IllegalArgumentException("Unknown column in WHERE: " + columnName);
+            }
+            String leftValue;
+            if (actualCol.equalsIgnoreCase("id")) {
+                leftValue = String.valueOf(row.getId());
+            } else {
+                leftValue = row.get(actualCol);
+            }
+            boolean isNull = leftValue == null || QueryParser.NULL_SENTINEL.equals(leftValue);
+            return expectNull == isNull;
         }
 
         private boolean compareValues(String leftValue, String operator, String rightValue) {
@@ -782,6 +829,11 @@ public class QueryExecutor {
             } catch (NumberFormatException e) {
                 return null;
             }
+        }
+
+        private String displayValue(String val) {
+            if (val == null || QueryParser.NULL_SENTINEL.equals(val)) return "";
+            return val;
         }
 
         private String formatNumber(double value) {
@@ -825,7 +877,12 @@ public class QueryExecutor {
                 String[] rowData = currentLine.split("\\t", -1);
                 Map<String, String> row = new HashMap<>();
                 for (int i = 0; i < rowData.length; i++) {
-                    row.put(columnNames[i], rowData[i]);
+                    String val = rowData[i];
+                    // Convert empty strings to NULL sentinel for in-memory representation
+                    if (val.isEmpty()) {
+                        val = QueryParser.NULL_SENTINEL;
+                    }
+                    row.put(columnNames[i], val);
                 }
                 table.insertRow(row);
             }

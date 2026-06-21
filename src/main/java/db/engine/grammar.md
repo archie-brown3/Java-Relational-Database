@@ -90,15 +90,19 @@ Performs an inner join. Output columns are prefixed with their source table name
 ## Conditions
 
 ```
-<condition>    ::=  <comparison> | <condition> "AND" <condition> | <condition> "OR" <condition>
+<condition>    ::=  <comparison> | <condition> "AND" <condition> | <condition> "OR" <condition> | <null-test>
 <comparison>   ::=  <name> <operator> <value>
 <operator>     ::=  "==" | "!=" | ">" | "<" | ">=" | "<=" | "LIKE"
+<null-test>    ::=  <name> "IS NULL" | <name> "IS NOT NULL"
 ```
 
 - `LIKE` supports `%` as a wildcard (converted to `.*` internally).
 - Numeric values are compared numerically when both sides parse as doubles.
 - String values are compared lexicographically.
 - Quoted values (single or double) have their quotes stripped before comparison.
+- `NULL` can be inserted as a value; it is represented internally as a sentinel and serialized as an empty string in .tab files for backward compatibility.
+- `NULL` never matches any equality comparison (`==` or `!=`).
+- `IS NULL` and `IS NOT NULL` test for the presence of NULL.
 
 ## Lexical rules
 

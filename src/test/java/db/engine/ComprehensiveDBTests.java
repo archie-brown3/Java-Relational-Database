@@ -728,6 +728,73 @@ public class ComprehensiveDBTests {
         assertFalse(r.contains("B"), "B should not appear (no match in inner join): " + r);
     }
 
+    // ─── NULL HANDLING ────────────────────────────────────────────────
+
+    @Test
+    public void testInsertNull() {
+        String db = randomName();
+        sendCommandToServer("CREATE DATABASE " + db + ";");
+        sendCommandToServer("USE " + db + ";");
+        sendCommandToServer("CREATE TABLE t (name);");
+        String r = sendCommandToServer("INSERT INTO t VALUES (NULL);");
+        assertTrue(r.startsWith("[OK]"), "INSERT with NULL should succeed: " + r);
+        r = sendCommandToServer("SELECT * FROM t;");
+        assertTrue(r.startsWith("[OK]"), "SELECT after NULL insert should work: " + r);
+        // NULL should display as empty string
+        String[] lines = r.split(System.lineSeparator());
+        assertTrue(lines.length >= 3, "Should have [OK], header, and data row");
+        // The data row (line 2) should have id and empty value
+        assertTrue(lines[2].endsWith("\t"), "NULL should display as empty: " + lines[2]);
+    }
+
+    @Test
+    public void testNullEqualityReturnsFalse() {
+        String db = randomName();
+        sendCommandToServer("CREATE DATABASE " + db + ";");
+        sendCommandToServer("USE " + db + ";");
+        sendCommandToServer("CREATE TABLE t (name);");
+        sendCommandToServer("INSERT INTO t VALUES (NULL);");
+        // NULL != 'anything' in SQL, so WHERE name == 'anything' should not match
+        String r = sendCommandToServer("SELECT * FROM t WHERE name == 'test';");
+        assertTrue(r.startsWith("[OK]"), "WHERE == on NULL should not error: " + r);
+        // The NULL row should NOT match
+        assertFalse(r.contains("test"), "NULL should not match equality check: " + r);
+        // Only [OK] and header line should appear (no data rows)
+        String[] lines = r.split(System.lineSeparator());
+        assertTrue(lines.length == 2, "Should only have [OK] + header, got " + lines.length + ": " + r);
+    }
+
+    @Test
+    public void testIsNull() {
+        String db = randomName();
+        sendCommandToServer("CREATE DATABASE " + db + ";");
+        sendCommandToServer("USE " + db + ";");
+        sendCommandToServer("CREATE TABLE t (name);");
+        sendCommandToServer("INSERT INTO t VALUES (NULL);");
+        sendCommandToServer("INSERT INTO t VALUES ('hello');");
+        String r = sendCommandToServer("SELECT * FROM t WHERE name IS NULL;");
+        assertTrue(r.startsWith("[OK]"), "IS NULL should return [OK]: " + r);
+        // Only the NULL row should match
+        assertFalse(r.contains("hello"), "Non-null row should not match IS NULL: " + r);
+        String[] lines = r.split(System.lineSeparator());
+        assertTrue(lines.length == 3, "IS NULL should return exactly 1 data row, got " + (lines.length - 2) + ": " + r);
+    }
+
+    @Test
+    public void testIsNotNull() {
+        String db = randomName();
+        sendCommandToServer("CREATE DATABASE " + db + ";");
+        sendCommandToServer("USE " + db + ";");
+        sendCommandToServer("CREATE TABLE t (name);");
+        sendCommandToServer("INSERT INTO t VALUES (NULL);");
+        sendCommandToServer("INSERT INTO t VALUES ('hello');");
+        String r = sendCommandToServer("SELECT * FROM t WHERE name IS NOT NULL;");
+        assertTrue(r.startsWith("[OK]"), "IS NOT NULL should return [OK]: " + r);
+        assertTrue(r.contains("hello"), "Non-null row should match IS NOT NULL: " + r);
+        String[] lines = r.split(System.lineSeparator());
+        assertTrue(lines.length == 3, "IS NOT NULL should return exactly 1 data row, got " + (lines.length - 2) + ": " + r);
+    }
+
     private int countOccurrences(String haystack, String needle) {
         int count = 0;
         int idx = 0;
