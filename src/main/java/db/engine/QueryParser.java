@@ -24,7 +24,6 @@ public class QueryParser {
             DeleteCommand,
             JoinCommand {
         <R> R accept(CommandVisitor<R> visitor);
-        // Method signature for a visitor pattern, declares a placeholder type for the method where r is some type determined at runtime
     }
 
     // Visitor contract for operations over command objects.
@@ -101,7 +100,10 @@ public class QueryParser {
         }
     }
 
-    public record SelectCommand(List<String> selectedAttributes, String tableName, String rawCondition) implements Command {
+    public record SelectCommand(List<String> selectedAttributes, String tableName, String rawCondition,
+                                String orderByColumn, boolean orderByDesc,
+                                String groupByColumn, String aggregateFunction, String aggregateColumn)
+            implements Command {
         @Override
         public <R> R accept(CommandVisitor<R> visitor) {
             return visitor.visit(this);
@@ -171,7 +173,7 @@ public class QueryParser {
     }
 
     private static Command parseUse(String command) {
-        // Minimal USE parser scaffold to enable visitor dispatch.
+        // Parse USE <DatabaseName>.
         String[] parts = command.trim().split("\\s+");
         if (parts.length != 2 || !parts[0].equalsIgnoreCase("USE")) {
             throw new IllegalArgumentException("Invalid USE syntax. Expected: USE <DatabaseName>");
@@ -240,8 +242,13 @@ public class QueryParser {
         String[] tokens = attributesRaw.split(",");
         List<String> attributes = new ArrayList<>();
         for (String token : tokens) {
-            String attribute = validateIdentifier(token.trim(), "attribute");
-            attributes.add(attribute);
+            String trimmed = token.trim();
+            if (trimmed.equals("*")) {
+                attributes.add("*");
+            } else {
+                String attribute = validateIdentifier(trimmed, "attribute");
+                attributes.add(attribute);
+            }
         }
         return attributes;
     }
@@ -401,12 +408,13 @@ public class QueryParser {
     }
 
     private static Command parseSelect(String command) {
-        // TODO: Parse SELECT <WildAttribList> FROM [TableName] [WHERE <Condition>].
+        // Parse SELECT <WildAttribList> FROM [TableName] [WHERE <Condition>] [GROUP BY <col>] [ORDER BY <col> [ASC|DESC]].
+        // Selector can include aggregate functions: COUNT(*), SUM(col), AVG(col).
 
         String trimmed = command.trim();
         String upper = trimmed.toUpperCase();
         if (!upper.startsWith("SELECT ")) {
-            throw new IllegalArgumentException("Invalid SELECT syntax. Expected: SELECT <attributes> FROM <table> [WHERE <condition>]");
+            throw new IllegalArgumentException("Invalid SELECT syntax.");
         }
 
         int fromIndex = upper.indexOf(" FROM ");
@@ -416,39 +424,157 @@ public class QueryParser {
 
         String selectorRaw = trimmed.substring("SELECT ".length(), fromIndex).trim();
         if (selectorRaw.isEmpty()) {
-            throw new IllegalArgumentException("SELECT must specify '*' or at least one attribute");
+            throw new IllegalArgumentException("SELECT must specify at least one column or aggregate");
+        }
+
+        // Parse selector — pre-process aggregates before splitting into attributes
+        String processedSelector = selectorRaw;
+        String aggregateFunction = null;
+        String aggregateColumn = null;
+
+        // Detect and extract aggregate function from the selector
+        String upperSelector = selectorRaw.toUpperCase().trim();
+        if (upperSelector.contains("COUNT(")) {
+            aggregateFunction = "COUNT";
+            int start = upperSelector.indexOf("COUNT(");
+            int end = upperSelector.indexOf(")", start);
+            if (end < 0) throw new IllegalArgumentException("COUNT(...) missing closing parenthesis");
+            String inner = selectorRaw.substring(start + "COUNT(".length(), end).trim();
+            aggregateColumn = inner.equals("*") ? null : inner;
+            // Remove COUNT(...) from selector; keep remaining attributes
+            processedSelector = (selectorRaw.substring(0, start) + selectorRaw.substring(end + 1)).trim();
+            // Clean up dangling commas
+            processedSelector = processedSelector.replaceAll("^,\\s*", "").replaceAll(",\\s*$", "").replaceAll(",\\s*,", ",");
+        } else if (upperSelector.contains("SUM(")) {
+            aggregateFunction = "SUM";
+            int start = upperSelector.indexOf("SUM(");
+            int end = upperSelector.indexOf(")", start);
+            if (end < 0) throw new IllegalArgumentException("SUM(...) missing closing parenthesis");
+            aggregateColumn = selectorRaw.substring(start + "SUM(".length(), end).trim();
+            if (aggregateColumn.isEmpty()) throw new IllegalArgumentException("SUM requires a column name");
+            processedSelector = (selectorRaw.substring(0, start) + aggregateColumn + selectorRaw.substring(end + 1)).trim();
+        } else if (upperSelector.contains("AVG(")) {
+            aggregateFunction = "AVG";
+            int start = upperSelector.indexOf("AVG(");
+            int end = upperSelector.indexOf(")", start);
+            if (end < 0) throw new IllegalArgumentException("AVG(...) missing closing parenthesis");
+            aggregateColumn = selectorRaw.substring(start + "AVG(".length(), end).trim();
+            if (aggregateColumn.isEmpty()) throw new IllegalArgumentException("AVG requires a column name");
+            processedSelector = (selectorRaw.substring(0, start) + aggregateColumn + selectorRaw.substring(end + 1)).trim();
         }
 
         List<String> selectedAttributes;
-        if (selectorRaw.equals("*")) {
+        if (processedSelector.trim().equals("*")) {
             selectedAttributes = List.of("*");
         } else {
-            selectedAttributes = parseAttributeList(selectorRaw);
+            selectedAttributes = parseAttributeList(processedSelector);
         }
 
         String fromTail = trimmed.substring(fromIndex + " FROM ".length()).trim();
         if (fromTail.isEmpty()) {
-            throw new IllegalArgumentException("Invalid SELECT syntax. Table name is required after FROM");
+            throw new IllegalArgumentException("Table name is required after FROM");
         }
 
         String fromTailUpper = fromTail.toUpperCase();
         int whereIndex = fromTailUpper.indexOf(" WHERE ");
+        int groupByIndex = fromTailUpper.lastIndexOf(" GROUP BY ");
+        int orderByIndex = fromTailUpper.lastIndexOf(" ORDER BY ");
 
-        String tableNameRaw;
-        String rawCondition = null;
+        // Validate clause ordering
+        if (whereIndex >= 0 && groupByIndex >= 0 && groupByIndex < whereIndex) {
+            throw new IllegalArgumentException("GROUP BY must come after WHERE");
+        }
+        if (groupByIndex >= 0 && orderByIndex >= 0 && orderByIndex < groupByIndex) {
+            throw new IllegalArgumentException("ORDER BY must come after GROUP BY");
+        }
 
-        if (whereIndex < 0) {
-            tableNameRaw = fromTail;
+        // Split the tail into segments
+        String tablePart = fromTail;
+        String wherePart = null;
+        String groupByPart = null;
+        String orderByPart = null;
+
+        if (whereIndex >= 0) {
+            tablePart = fromTail.substring(0, whereIndex).trim();
+            String remainder = fromTail.substring(whereIndex + " WHERE ".length()).trim();
+            groupByIndex = remainder.toUpperCase().lastIndexOf(" GROUP BY ");
+            orderByIndex = remainder.toUpperCase().lastIndexOf(" ORDER BY ");
+
+            if (groupByIndex >= 0 && orderByIndex >= 0) {
+                wherePart = remainder.substring(0, groupByIndex).trim();
+                groupByPart = remainder.substring(groupByIndex + " GROUP BY ".length(), orderByIndex).trim();
+                orderByPart = remainder.substring(orderByIndex + " ORDER BY ".length()).trim();
+            } else if (groupByIndex >= 0) {
+                wherePart = remainder.substring(0, groupByIndex).trim();
+                groupByPart = remainder.substring(groupByIndex + " GROUP BY ".length()).trim();
+            } else if (orderByIndex >= 0) {
+                wherePart = remainder.substring(0, orderByIndex).trim();
+                orderByPart = remainder.substring(orderByIndex + " ORDER BY ".length()).trim();
+            } else {
+                wherePart = remainder;
+            }
         } else {
-            tableNameRaw = fromTail.substring(0, whereIndex).trim();
-            rawCondition = fromTail.substring(whereIndex + " WHERE ".length()).trim();
-            if (rawCondition.isEmpty()) {
-                throw new IllegalArgumentException("Invalid SELECT syntax. WHERE clause requires a condition");
+            String remainder = fromTail;
+            groupByIndex = remainder.toUpperCase().lastIndexOf(" GROUP BY ");
+            orderByIndex = remainder.toUpperCase().lastIndexOf(" ORDER BY ");
+
+            if (groupByIndex >= 0 && orderByIndex >= 0) {
+                tablePart = remainder.substring(0, groupByIndex).trim();
+                groupByPart = remainder.substring(groupByIndex + " GROUP BY ".length(), orderByIndex).trim();
+                orderByPart = remainder.substring(orderByIndex + " ORDER BY ".length()).trim();
+            } else if (groupByIndex >= 0) {
+                tablePart = remainder.substring(0, groupByIndex).trim();
+                groupByPart = remainder.substring(groupByIndex + " GROUP BY ".length()).trim();
+            } else if (orderByIndex >= 0) {
+                tablePart = remainder.substring(0, orderByIndex).trim();
+                orderByPart = remainder.substring(orderByIndex + " ORDER BY ".length()).trim();
+            } else {
+                tablePart = remainder;
             }
         }
 
-        String tableName = validateIdentifier(tableNameRaw, "table");
-        return new SelectCommand(selectedAttributes, tableName, rawCondition);
+        // Validate table name
+        String tableName = validateIdentifier(tablePart, "table");
+
+        // Validate WHERE
+        String rawCondition = null;
+        if (wherePart != null) {
+            if (wherePart.isEmpty()) {
+                throw new IllegalArgumentException("WHERE clause requires a condition");
+            }
+            rawCondition = wherePart;
+        }
+
+        // Parse GROUP BY
+        String groupByColumn = null;
+        if (groupByPart != null) {
+            if (groupByPart.isEmpty()) {
+                throw new IllegalArgumentException("GROUP BY requires a column name");
+            }
+            groupByColumn = groupByPart.trim();
+        }
+
+        // Parse ORDER BY
+        String orderByColumn = null;
+        boolean orderByDesc = false;
+        if (orderByPart != null) {
+            if (orderByPart.isEmpty()) {
+                throw new IllegalArgumentException("ORDER BY requires a column name");
+            }
+            String[] orderParts = orderByPart.split("\\s+", 2);
+            orderByColumn = orderParts[0];
+            if (orderParts.length > 1) {
+                String direction = orderParts[1].toUpperCase();
+                if ("DESC".equals(direction)) {
+                    orderByDesc = true;
+                } else if (!"ASC".equals(direction)) {
+                    throw new IllegalArgumentException("Invalid ORDER BY direction: " + orderParts[1]);
+                }
+            }
+        }
+
+        return new SelectCommand(selectedAttributes, tableName, rawCondition,
+                                 orderByColumn, orderByDesc, groupByColumn, aggregateFunction, aggregateColumn);
     }
 
     private static Command parseUpdate(String command) {

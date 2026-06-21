@@ -3,6 +3,7 @@ package db.engine;
 import java.io.*;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.regex.Matcher;
@@ -40,7 +41,6 @@ public class QueryExecutor {
     }
 
     // Visitor implementation that maps each command type to execution behavior.
-    // TODO: Replace placeholder returns with real filesystem/table operations.
     public static class ExecutionVisitor implements QueryParser.CommandVisitor<String> {
         private final ExecutionContext context;
         private final QueryExecutor executor;
@@ -134,7 +134,7 @@ public class QueryExecutor {
             }
             return "[OK]";
         }
-        public Boolean removeDirectory(File file){
+        private boolean removeDirectory(File file) {
             if (file.isDirectory()) {
                 File[] files = file.listFiles();
                 for (File f : files) {
@@ -192,8 +192,6 @@ public class QueryExecutor {
                     if (actualCol == null) {
                         return "[ERROR] Column '" + attributeName + "' does not exist";
                     }
-                    // Remove column from schema and all rows
-                    // Table doesn't have a removeColumn method — we need to rebuild
                     table.removeColumn(actualCol);
                 } else {
                     return "[ERROR] Unknown ALTER operation: " + alteration;
@@ -288,12 +286,8 @@ public class QueryExecutor {
                 }
             }
 
-            // Step 2: Build header and then append matching rows.
-            StringBuilder response = new StringBuilder();
-            response.append("[OK]");
-            response.append(System.lineSeparator());
-            response.append(String.join("\t", projection));
-
+            // Step 2: Collect matching rows, apply grouping if requested.
+            List<Row> matchingRows = new ArrayList<>();
             for (Row row : table.getAllRows()) {
                 boolean includeRow;
                 try {
@@ -302,10 +296,129 @@ public class QueryExecutor {
                     return "[ERROR] " + e.getMessage();
                 }
 
-                if (!includeRow) {
-                    continue;
+                if (includeRow) {
+                    matchingRows.add(row);
+                }
+            }
+
+            // Group-by aggregation branch
+            if (command.groupByColumn() != null) {
+                String groupCol = findColumnNameIgnoreCase(allColumns, command.groupByColumn());
+                if (groupCol == null) {
+                    return "[ERROR] Unknown column in GROUP BY: " + command.groupByColumn();
+                }
+                if (!projection.contains(groupCol)) {
+                    return "[ERROR] GROUP BY column '" + groupCol + "' must appear in SELECT";
                 }
 
+                String aggFn = command.aggregateFunction();
+                if (aggFn == null) {
+                    return "[ERROR] SELECT with GROUP BY requires an aggregate function (COUNT, SUM, AVG)";
+                }
+
+                // Group rows by the group column value
+                Map<String, List<Row>> groups = new LinkedHashMap<>();
+                for (Row row : matchingRows) {
+                    String key = row.get(groupCol);
+                    if (key == null) key = "";
+                    groups.computeIfAbsent(key, k -> new ArrayList<>()).add(row);
+                }
+
+                // Compute aggregate per group and build output
+                StringBuilder response = new StringBuilder();
+                response.append("[OK]");
+                response.append(System.lineSeparator());
+
+                // Header: group column and aggregate label
+                String aggLabel = aggFn + "(" + (command.aggregateColumn() != null ? command.aggregateColumn() : "*") + ")";
+                response.append(groupCol);
+                response.append("\t");
+                response.append(aggLabel);
+
+                for (Map.Entry<String, List<Row>> entry : groups.entrySet()) {
+                    response.append(System.lineSeparator());
+                    response.append(entry.getKey());
+                    response.append("\t");
+
+                    List<Row> groupRows = entry.getValue();
+                    String aggResult = switch (aggFn) {
+                        case "COUNT" -> String.valueOf(groupRows.size());
+                        case "SUM" -> {
+                            double sum = 0;
+                            String aggCol = command.aggregateColumn();
+                            String actualAggCol = findColumnNameIgnoreCase(allColumns, aggCol);
+                            if (actualAggCol == null) {
+                                throw new IllegalArgumentException("Unknown column in aggregate: " + aggCol);
+                            }
+                            for (Row r : groupRows) {
+                                String val = r.get(actualAggCol);
+                                Double num = tryParseDouble(val);
+                                if (num == null) {
+                                    throw new IllegalArgumentException("Cannot SUM non-numeric value: " + val);
+                                }
+                                sum += num;
+                            }
+                            yield formatNumber(sum);
+                        }
+                        case "AVG" -> {
+                            double sum = 0;
+                            String aggCol = command.aggregateColumn();
+                            String actualAggCol = findColumnNameIgnoreCase(allColumns, aggCol);
+                            if (actualAggCol == null) {
+                                throw new IllegalArgumentException("Unknown column in aggregate: " + aggCol);
+                            }
+                            for (Row r : groupRows) {
+                                String val = r.get(actualAggCol);
+                                Double num = tryParseDouble(val);
+                                if (num == null) {
+                                    throw new IllegalArgumentException("Cannot AVG non-numeric value: " + val);
+                                }
+                                sum += num;
+                            }
+                            yield formatNumber(sum / groupRows.size());
+                        }
+                        default -> throw new IllegalArgumentException("Unknown aggregate function: " + aggFn);
+                    };
+                    response.append(aggResult);
+                }
+
+                return response.toString();
+            }
+
+            // Standard (non-grouped) output
+            StringBuilder response = new StringBuilder();
+            response.append("[OK]");
+            response.append(System.lineSeparator());
+            response.append(String.join("\t", projection));
+
+            // Apply ORDER BY if specified
+            if (command.orderByColumn() != null) {
+                String orderCol = findColumnNameIgnoreCase(allColumns, command.orderByColumn());
+                if (orderCol == null) {
+                    return "[ERROR] Unknown column in ORDER BY: " + command.orderByColumn();
+                }
+                final String sortColumn = orderCol;
+                boolean descending = command.orderByDesc();
+
+                matchingRows.sort((a, b) -> {
+                    String valA = sortColumn.equalsIgnoreCase("id") ? String.valueOf(a.getId()) : a.get(sortColumn);
+                    String valB = sortColumn.equalsIgnoreCase("id") ? String.valueOf(b.getId()) : b.get(sortColumn);
+                    if (valA == null) valA = "";
+                    if (valB == null) valB = "";
+
+                    Double numA = tryParseDouble(valA);
+                    Double numB = tryParseDouble(valB);
+                    int cmp;
+                    if (numA != null && numB != null) {
+                        cmp = numA.compareTo(numB);
+                    } else {
+                        cmp = valA.compareTo(valB);
+                    }
+                    return descending ? -cmp : cmp;
+                });
+            }
+
+            for (Row row : matchingRows) {
                 List<String> selectedValues = new ArrayList<>();
                 for (String columnName : projection) {
                     if (columnName.equalsIgnoreCase("id")) {
@@ -489,31 +602,18 @@ public class QueryExecutor {
         }
 
         private File resolveTableFile(String tableName) {
-            // Centralized table path resolver.
-            // Steps to implement:
-            // 1) Validate a database is selected in ExecutionContext.
+            // Build path: <storageRoot>/<currentDatabase>/<tableName>.tab
             String currentDb = requireCurrentDatabase();
-            // 2) Build path: <storageRoot>/<currentDatabase>/<tableName>.tab.
-
-            // 3) Return the File object for downstream load/save operations.
             return new File(context.getStorageFolderPath() + File.separator + currentDb + File.separator + tableName + ".tab");
         }
 
         private String requireCurrentDatabase() {
-            // Validation helper for commands that require USE to be set.
-            // Steps to implement:
-            // 1) Read current database from context.
+            // Read current database from context and validate it is set.
             String currentDb = context.getCurrentDatabase();
-            // 2) Reject null/blank with a clear IllegalArgumentException message.
             if (currentDb == null || currentDb.isBlank()) {
                 throw new IllegalArgumentException("Database is not selected. Use a database first.");
             }
-            // 3) Return normalized database name for path construction.
             return executor.normaliseDatabaseName(currentDb);
-        }
-
-        private String notImplemented(String commandName) {
-            return "[ERROR] " + commandName + " execution not implemented yet";
         }
 
         private String findColumnNameIgnoreCase(List<String> columnNames, String targetColumn) {
@@ -619,6 +719,13 @@ public class QueryExecutor {
             } catch (NumberFormatException e) {
                 return null;
             }
+        }
+
+        private String formatNumber(double value) {
+            if (value == Math.floor(value) && !Double.isInfinite(value)) {
+                return String.valueOf((long) value);
+            }
+            return String.valueOf(value);
         }
 
         private String stripMatchingQuotes(String value) {

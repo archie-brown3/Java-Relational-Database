@@ -1,6 +1,10 @@
 package db.engine;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 
 public class Table {
     private final String name;
@@ -17,26 +21,11 @@ public class Table {
 
     // --- Row Operations ---
     
-    public Row insertRow(Map<String, String> values) throws IllegalArgumentException{
-        for (Column column : schema) {
-            if(column.isForeignKey()){
-                // Get the value of the foreign key column
-                String FKvalue = values.get(column.name());
-                if (column.isForeignKey() && FKvalue != null) {
-                    throw new IllegalArgumentException("Foreign key violation: " + FKvalue);
-                }
-            }
-
-        }
+    public Row insertRow(Map<String, String> values) throws IllegalArgumentException {
         int id = nextId++;
         Row row = new Row(id, this, values);
-        rows.put(id, row); // key value store
+        rows.put(id, row);
         return row;
-        // todo: add error handling
-    }
-
-    public Optional<Row> getRowById(int id) {
-        return Optional.ofNullable(rows.get(id));
     }
 
     public boolean deleteRow(int id) {
@@ -45,12 +34,6 @@ public class Table {
 
     public List<Row> getAllRows() {
         return new ArrayList<>(rows.values());
-    }
-
-    public List<Row> selectWhere(String columnName, String value) {
-        return rows.values().stream()
-            .filter(row -> value.equals(row.get(columnName)))
-            .toList();
     }
 
     // --- Schema Operations ---
@@ -92,17 +75,8 @@ public class Table {
         return schema.stream().map(Column::name).toList();
     }
 
-    public int getColumnIndex(String name) {
-        for (int i = 0; i < schema.size(); i++) {
-            if (schema.get(i).name().equalsIgnoreCase(name)) return i;
-        }
-        return -1;
-    }
-
     // --- Getters ---
     
     public String getName() { return name; }
-    public int getRowCount() { return rows.size(); }
-    public boolean isEmpty() { return rows.isEmpty(); }
 }
 

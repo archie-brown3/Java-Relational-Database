@@ -48,9 +48,18 @@ DROP on the `id` column is rejected.
 ## SELECT
 
 ```
-<select>       ::=  "SELECT" <selector> "FROM" <name> [ "WHERE" <condition> ]
-<selector>     ::=  "*" | <name-list>
+<select>       ::=  "SELECT" <attributes> "FROM" <name>
+                   ["WHERE" <condition>]
+                   ["GROUP BY" <name>]
+                   ["ORDER BY" <name> ["ASC" | "DESC"]]
+<attributes>   ::=  "*" | <attribute-list>
+<attribute-list> ::= <aggregate> | <name> | <aggregate> "," <name> | <name> "," <aggregate>
+<aggregate>    ::=  "COUNT(*)" | "SUM(" <name> ")" | "AVG(" <name> ")"
 ```
+
+- `ORDER BY` defaults to ASC when no direction is specified.
+- Numeric columns are compared numerically; text columns lexicographically.
+- `GROUP BY` requires an aggregate function in the SELECT clause.
 
 ## UPDATE
 
@@ -103,4 +112,4 @@ Performs an inner join. Output columns are prefixed with their source table name
 <number>       ::=  [0-9]+ [ "." [0-9]+ ]?
 ```
 
-Identifiers are case-insensitive. Database names are stored lowercase. Reserved keywords (USE, CREATE, DATABASE, TABLE, DROP, ALTER, ADD, INSERT, INTO, VALUES, SELECT, FROM, WHERE, UPDATE, SET, DELETE, JOIN, AND, ON, LIKE, TRUE, FALSE, NULL) cannot be used as identifiers.
+Identifiers are case-insensitive. Database names are stored lowercase. Reserved keywords (USE, CREATE, DATABASE, TABLE, DROP, ALTER, ADD, INSERT, INTO, VALUES, SELECT, FROM, WHERE, UPDATE, SET, DELETE, JOIN, AND, ON, LIKE, TRUE, FALSE, NULL, ORDER, BY, ASC, DESC, GROUP, COUNT, SUM, AVG) cannot be used as identifiers.

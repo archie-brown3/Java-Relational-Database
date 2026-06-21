@@ -391,4 +391,123 @@ public class ComprehensiveDBTests {
                 "Response for '" + cmd + "' should start with [OK] or [ERROR]: " + r);
         }
     }
+
+    // ─── ORDER BY ────────────────────────────────────────────────────
+
+    @Test
+    public void testOrderByAscending() {
+        String db = randomName();
+        sendCommandToServer("CREATE DATABASE " + db + ";");
+        sendCommandToServer("USE " + db + ";");
+        sendCommandToServer("CREATE TABLE scores (player, points);");
+        sendCommandToServer("INSERT INTO scores VALUES ('Charlie', 50);");
+        sendCommandToServer("INSERT INTO scores VALUES ('Alice', 100);");
+        sendCommandToServer("INSERT INTO scores VALUES ('Bob', 75);");
+        String r = sendCommandToServer("SELECT * FROM scores ORDER BY points ASC;");
+        assertTrue(r.startsWith("[OK]"), "ORDER BY ASC should return [OK]: " + r);
+        // Charlie(50) should come before Bob(75) should come before Alice(100)
+        int alicePos = r.indexOf("Alice");
+        int bobPos = r.indexOf("Bob");
+        int charliePos = r.indexOf("Charlie");
+        assertTrue(alicePos > 0 && bobPos > 0 && charliePos > 0, "All three names should appear in result");
+        assertTrue(charliePos < bobPos, "Charlie (50) should come before Bob (75) in ASC order");
+        assertTrue(bobPos < alicePos, "Bob (75) should come before Alice (100) in ASC order");
+    }
+
+    @Test
+    public void testOrderByDescending() {
+        String db = randomName();
+        sendCommandToServer("CREATE DATABASE " + db + ";");
+        sendCommandToServer("USE " + db + ";");
+        sendCommandToServer("CREATE TABLE items (name, price);");
+        sendCommandToServer("INSERT INTO items VALUES ('Widget', 10);");
+        sendCommandToServer("INSERT INTO items VALUES ('Gadget', 50);");
+        sendCommandToServer("INSERT INTO items VALUES ('Thing', 30);");
+        String r = sendCommandToServer("SELECT * FROM items ORDER BY price DESC;");
+        assertTrue(r.startsWith("[OK]"), "ORDER BY DESC should return [OK]: " + r);
+        int gadgetPos = r.indexOf("Gadget");
+        int thingPos = r.indexOf("Thing");
+        int widgetPos = r.indexOf("Widget");
+        assertTrue(gadgetPos < thingPos, "Gadget (50) should come before Thing (30) in DESC order");
+        assertTrue(thingPos < widgetPos, "Thing (30) should come before Widget (10) in DESC order");
+    }
+
+    @Test
+    public void testOrderByDefaultAsc() {
+        String db = randomName();
+        sendCommandToServer("CREATE DATABASE " + db + ";");
+        sendCommandToServer("USE " + db + ";");
+        sendCommandToServer("CREATE TABLE vals (x);");
+        sendCommandToServer("INSERT INTO vals VALUES ('c');");
+        sendCommandToServer("INSERT INTO vals VALUES ('a');");
+        sendCommandToServer("INSERT INTO vals VALUES ('b');");
+        String r = sendCommandToServer("SELECT * FROM vals ORDER BY x;");
+        assertTrue(r.startsWith("[OK]"), "ORDER BY without ASC/DESC should default to ASC: " + r);
+        int aPos = r.indexOf("a");
+        int bPos = r.indexOf("b");
+        int cPos = r.indexOf("c");
+        assertTrue(aPos < bPos && bPos < cPos, "Should be in alphabetical order: a, b, c");
+    }
+
+    @Test
+    public void testOrderByNonexistentColumn() {
+        String db = randomName();
+        sendCommandToServer("CREATE DATABASE " + db + ";");
+        sendCommandToServer("USE " + db + ";");
+        sendCommandToServer("CREATE TABLE t (a);");
+        sendCommandToServer("INSERT INTO t VALUES ('x');");
+        String r = sendCommandToServer("SELECT * FROM t ORDER BY nonexistent ASC;");
+        assertTrue(r.startsWith("[ERROR]"), "ORDER BY on nonexistent column should error: " + r);
+    }
+
+    // ─── GROUP BY ────────────────────────────────────────────────────
+
+    @Test
+    public void testGroupByCount() {
+        String db = randomName();
+        sendCommandToServer("CREATE DATABASE " + db + ";");
+        sendCommandToServer("USE " + db + ";");
+        sendCommandToServer("CREATE TABLE sales (product, region);");
+        sendCommandToServer("INSERT INTO sales VALUES ('Widget', 'North');");
+        sendCommandToServer("INSERT INTO sales VALUES ('Widget', 'South');");
+        sendCommandToServer("INSERT INTO sales VALUES ('Widget', 'North');");
+        sendCommandToServer("INSERT INTO sales VALUES ('Gadget', 'North');");
+        sendCommandToServer("INSERT INTO sales VALUES ('Gadget', 'South');");
+        String r = sendCommandToServer("SELECT product, COUNT(*) FROM sales GROUP BY product;");
+        assertTrue(r.startsWith("[OK]"), "GROUP BY with COUNT should return [OK]: " + r);
+        assertTrue(r.contains("Widget"), "Widget should appear in GROUP BY result");
+        assertTrue(r.contains("Gadget"), "Gadget should appear in GROUP BY result");
+        assertTrue(r.contains("3"), "Widget COUNT should be 3");
+        assertTrue(r.contains("2"), "Gadget COUNT should be 2");
+    }
+
+    @Test
+    public void testGroupBySum() {
+        String db = randomName();
+        sendCommandToServer("CREATE DATABASE " + db + ";");
+        sendCommandToServer("USE " + db + ";");
+        sendCommandToServer("CREATE TABLE orders (customer, amount);");
+        sendCommandToServer("INSERT INTO orders VALUES ('Alice', 100);");
+        sendCommandToServer("INSERT INTO orders VALUES ('Alice', 50);");
+        sendCommandToServer("INSERT INTO orders VALUES ('Bob', 200);");
+        String r = sendCommandToServer("SELECT customer, SUM(amount) FROM orders GROUP BY customer;");
+        assertTrue(r.startsWith("[OK]"), "GROUP BY with SUM should return [OK]: " + r);
+        assertTrue(r.contains("Alice") && r.contains("150"), "Alice SUM should be 150");
+        assertTrue(r.contains("Bob") && r.contains("200"), "Bob SUM should be 200");
+    }
+
+    @Test
+    public void testGroupByAvg() {
+        String db = randomName();
+        sendCommandToServer("CREATE DATABASE " + db + ";");
+        sendCommandToServer("USE " + db + ";");
+        sendCommandToServer("CREATE TABLE grades (student, score);");
+        sendCommandToServer("INSERT INTO grades VALUES ('S1', 80);");
+        sendCommandToServer("INSERT INTO grades VALUES ('S1', 90);");
+        sendCommandToServer("INSERT INTO grades VALUES ('S2', 60);");
+        String r = sendCommandToServer("SELECT student, AVG(score) FROM grades GROUP BY student;");
+        assertTrue(r.startsWith("[OK]"), "GROUP BY with AVG should return [OK]: " + r);
+        assertTrue(r.contains("S1") && r.contains("85"), "S1 AVG should be 85");
+        assertTrue(r.contains("S2") && r.contains("60"), "S2 AVG should be 60");
+    }
 }
