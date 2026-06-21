@@ -3,9 +3,11 @@ package db.engine;
 import java.io.*;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -416,6 +418,27 @@ public class QueryExecutor {
                     }
                     return descending ? -cmp : cmp;
                 });
+            }
+
+            // Apply DISTINCT deduplication after sorting
+            if (command.distinct()) {
+                List<Row> distinctRows = new ArrayList<>();
+                Set<String> seen = new HashSet<>();
+                for (Row row : matchingRows) {
+                    StringBuilder key = new StringBuilder();
+                    for (String columnName : projection) {
+                        if (columnName.equalsIgnoreCase("id")) {
+                            key.append(String.valueOf(row.getId()));
+                        } else {
+                            key.append(row.get(columnName));
+                        }
+                        key.append("\t");
+                    }
+                    if (seen.add(key.toString())) {
+                        distinctRows.add(row);
+                    }
+                }
+                matchingRows = distinctRows;
             }
 
             for (Row row : matchingRows) {

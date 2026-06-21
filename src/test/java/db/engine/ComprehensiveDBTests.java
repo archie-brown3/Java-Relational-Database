@@ -510,4 +510,87 @@ public class ComprehensiveDBTests {
         assertTrue(r.contains("S1") && r.contains("85"), "S1 AVG should be 85");
         assertTrue(r.contains("S2") && r.contains("60"), "S2 AVG should be 60");
     }
+
+    // ─── DISTINCT ────────────────────────────────────────────────────
+
+    @Test
+    public void testDistinctSingleColumn() {
+        String db = randomName();
+        sendCommandToServer("CREATE DATABASE " + db + ";");
+        sendCommandToServer("USE " + db + ";");
+        sendCommandToServer("CREATE TABLE t (city);");
+        sendCommandToServer("INSERT INTO t VALUES ('London');");
+        sendCommandToServer("INSERT INTO t VALUES ('Paris');");
+        sendCommandToServer("INSERT INTO t VALUES ('London');");
+        sendCommandToServer("INSERT INTO t VALUES ('Berlin');");
+        sendCommandToServer("INSERT INTO t VALUES ('Paris');");
+        String r = sendCommandToServer("SELECT DISTINCT city FROM t;");
+        assertTrue(r.startsWith("[OK]"), "SELECT DISTINCT should return [OK]: " + r);
+        // Should have exactly 3 distinct cities: Berlin, London, Paris (order may vary)
+        int londonCount = countOccurrences(r, "London");
+        int parisCount = countOccurrences(r, "Paris");
+        int berlinCount = countOccurrences(r, "Berlin");
+        assertTrue(londonCount == 1, "London should appear exactly once, got " + londonCount + ": " + r);
+        assertTrue(parisCount == 1, "Paris should appear exactly once, got " + parisCount + ": " + r);
+        assertTrue(berlinCount == 1, "Berlin should appear exactly once, got " + berlinCount + ": " + r);
+    }
+
+    @Test
+    public void testDistinctWildcard() {
+        String db = randomName();
+        sendCommandToServer("CREATE DATABASE " + db + ";");
+        sendCommandToServer("USE " + db + ";");
+        sendCommandToServer("CREATE TABLE dupes (a, b);");
+        sendCommandToServer("INSERT INTO dupes VALUES ('x', '1');");
+        sendCommandToServer("INSERT INTO dupes VALUES ('x', '1');");
+        sendCommandToServer("INSERT INTO dupes VALUES ('x', '2');");
+        sendCommandToServer("INSERT INTO dupes VALUES ('y', '1');");
+        String r = sendCommandToServer("SELECT DISTINCT * FROM dupes;");
+        assertTrue(r.startsWith("[OK]"), "SELECT DISTINCT * should return [OK]: " + r);
+        // DISTINCT * includes the id column — each row has a unique id so all rows are distinct.
+        // 4 rows inserted, all with different ids, so all 4 should appear.
+        int xCount = countOccurrences(r, "x");
+        assertTrue(xCount == 3, "x should appear 3 times (3 rows with x, all distinct by id): " + r);
+        int yCount = countOccurrences(r, "y");
+        assertTrue(yCount == 1, "y should appear once: " + r);
+    }
+
+    @Test
+    public void testDistinctWithOrderBy() {
+        String db = randomName();
+        sendCommandToServer("CREATE DATABASE " + db + ";");
+        sendCommandToServer("USE " + db + ";");
+        sendCommandToServer("CREATE TABLE scores (name, pts);");
+        sendCommandToServer("INSERT INTO scores VALUES ('A', 10);");
+        sendCommandToServer("INSERT INTO scores VALUES ('B', 20);");
+        sendCommandToServer("INSERT INTO scores VALUES ('A', 10);");
+        String r = sendCommandToServer("SELECT DISTINCT name, pts FROM scores ORDER BY name ASC;");
+        assertTrue(r.startsWith("[OK]"), "DISTINCT with ORDER BY should return [OK]: " + r);
+        int aIdx = r.indexOf("A");
+        int bIdx = r.indexOf("B");
+        assertTrue(aIdx < bIdx, "A should come before B in ASC order: " + r);
+        // No duplicates
+        assertTrue(countOccurrences(r, "10") == 1, "10 should appear once: " + r);
+        assertTrue(countOccurrences(r, "20") == 1, "20 should appear once: " + r);
+    }
+
+    @Test
+    public void testDistinctNoMatches() {
+        String db = randomName();
+        sendCommandToServer("CREATE DATABASE " + db + ";");
+        sendCommandToServer("USE " + db + ";");
+        sendCommandToServer("CREATE TABLE empty (x);");
+        String r = sendCommandToServer("SELECT DISTINCT x FROM empty;");
+        assertTrue(r.startsWith("[OK]"), "DISTINCT on empty table should return [OK]: " + r);
+    }
+
+    private int countOccurrences(String haystack, String needle) {
+        int count = 0;
+        int idx = 0;
+        while ((idx = haystack.indexOf(needle, idx)) != -1) {
+            count++;
+            idx += needle.length();
+        }
+        return count;
+    }
 }

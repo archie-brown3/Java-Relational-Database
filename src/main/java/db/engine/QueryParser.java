@@ -102,8 +102,8 @@ public class QueryParser {
 
     public record SelectCommand(List<String> selectedAttributes, String tableName, String rawCondition,
                                 String orderByColumn, boolean orderByDesc,
-                                String groupByColumn, String aggregateFunction, String aggregateColumn)
-            implements Command {
+                                String groupByColumn, String aggregateFunction, String aggregateColumn,
+                                boolean distinct) implements Command {
         @Override
         public <R> R accept(CommandVisitor<R> visitor) {
             return visitor.visit(this);
@@ -427,6 +427,14 @@ public class QueryParser {
             throw new IllegalArgumentException("SELECT must specify at least one column or aggregate");
         }
 
+        // Detect DISTINCT keyword
+        boolean distinct = false;
+        String upperSelectorStart = selectorRaw.toUpperCase();
+        if (upperSelectorStart.startsWith("DISTINCT ")) {
+            distinct = true;
+            selectorRaw = selectorRaw.substring("DISTINCT ".length()).trim();
+        }
+
         // Parse selector — pre-process aggregates before splitting into attributes
         String processedSelector = selectorRaw;
         String aggregateFunction = null;
@@ -574,7 +582,7 @@ public class QueryParser {
         }
 
         return new SelectCommand(selectedAttributes, tableName, rawCondition,
-                                 orderByColumn, orderByDesc, groupByColumn, aggregateFunction, aggregateColumn);
+                                 orderByColumn, orderByDesc, groupByColumn, aggregateFunction, aggregateColumn, distinct);
     }
 
     private static Command parseUpdate(String command) {
