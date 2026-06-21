@@ -67,7 +67,7 @@ A relational database engine built from scratch in Java 17. Parses a custom SQL 
 | `GROUP BY` | Done | `SELECT col, AGG(col) FROM ... GROUP BY col;` |
 | Aggregates | Done | `COUNT(*)`, `SUM(col)`, `AVG(col)` |
 
-All 11 commands plus ORDER BY and GROUP BY aggregations are fully implemented. Every response begins with `[OK]` or `[ERROR]`.
+All 15+ commands are fully implemented. Nested WHERE parenthesization, NULL handling (IS NULL/IS NOT NULL), multi-column ORDER BY and GROUP BY, DISTINCT, LIMIT/OFFSET, and LEFT JOIN are all supported. Every response begins with `[OK]` or `[ERROR]`.
 
 ### Why This SQL Dialect
 
@@ -155,7 +155,7 @@ src/main/java/db/engine/
 
 src/test/java/db/engine/
 ├── ExampleDBTests.java       # Integration tests
-├── ComprehensiveDBTests.java # Full command coverage (35 tests)
+├── ComprehensiveDBTests.java # Full command coverage (62 tests)
 ├── people.tab                # Test fixture
 └── sheds.tab                 # Test fixture (JOIN data)
 ```
@@ -170,16 +170,17 @@ This is a deliberately minimal database engine focusing on core relational opera
 
 **Missing SQL features**
 - Subqueries and nested SELECT statements
-- Multiple JOIN types (LEFT, RIGHT, OUTER) — only INNER JOIN
-- DISTINCT, LIMIT/OFFSET, HAVING
-- NULL-aware operations (NULL is treated as an empty string)
-- Multi-column ORDER BY and GROUP BY
+- RIGHT JOIN and FULL OUTER JOIN (LEFT JOIN is supported)
+- DISTINCT already implemented, but HAVING is still TODO
+- LIMIT/OFFSET already implemented
+- NULL-aware operations now supported — NULL is stored as a sentinel, IS NULL/IS NOT NULL work correctly
+- Multi-column ORDER BY and GROUP BY now supported
 - Index structures — queries are O(n) table scans
 - Multi-user: single synchronous connection at a time
 - Transaction support (BEGIN/COMMIT/ROLLBACK)
 
 **Design tradeoffs**
 - Integer IDs are monotonic with no reuse after deletes
-- No nested WHERE parenthesization (AND/OR are left-associative)
+- Nested WHERE parenthesization now supported via recursive descent parser
 - File-based persistence prioritises human readability over I/O throughput
 - Column types are tracked but not enforced at insert time (all values stored as strings)
