@@ -40,9 +40,9 @@ A relational database engine built from scratch in Java 17. Parses a custom SQL 
 
 **Separation of concerns** drives the entire architecture. The `QueryParser` is a pure function: it accepts a SQL string and returns an immutable command object. It has no knowledge of files, sockets, or runtime state. This keeps the parser testable in isolation and makes the grammar easy to extend without touching execution logic.
 
-**The Visitor pattern** decouples command definitions from command execution. Each of the 11 SQL commands is a sealed record implementing `Command`. The `QueryExecutor` implements `CommandVisitor<String>`, providing a `visit()` method for each command type. There are no `instanceof` chains, no switch-on-type, and adding a new command requires only adding a record and a visitor method — the compiler enforces exhaustive handling through the sealed type hierarchy. This promotes loose coupling between the parser layer and the execution layer.
+**The Visitor pattern** decouples command definitions from command execution. Each SQL command is a sealed record implementing `Command`. The `QueryExecutor` implements `CommandVisitor<String>`, providing a `visit()` method for each command type. There are no `instanceof` chains, no switch-on-type, and adding a new command requires only adding a record and a visitor method — the compiler enforces exhaustive handling through the sealed type hierarchy. This promotes loose coupling between the parser layer and the execution layer.
 
-**Single responsibility** is enforced at the class level. `Table` manages an in-memory collection of rows and columns with no I/O. `Row` owns a single record's key-value data. `Column` is a value object carrying name, type, and foreign key metadata. `QueryExecutor` owns all file I/O and delegates to these domain objects for in-memory operations. No class mixes persistence with business logic.
+**Single responsibility** is enforced at the class level. `Table` manages an in-memory collection of rows and columns with no I/O. `Row` owns a single record's key-value data. `Column` is a value object carrying name and type metadata. `QueryExecutor` owns all file I/O and delegates to these domain objects for in-memory operations. No class mixes persistence with business logic.
 
 **Immutability where possible.** Parsed commands are Java records — shallowly immutable, trivially thread-safe, and safe to pass across layers. The `ExecutionContext` is the only mutable object in the system, carrying the current database selection and storage root path. All other state changes flow through explicit save operations.
 
@@ -58,16 +58,24 @@ A relational database engine built from scratch in Java 17. Parses a custom SQL 
 | `CREATE TABLE` | `CREATE TABLE <name> (<col1>, <col2>, ...);` |
 | `DROP TABLE` | `DROP TABLE <name>;` |
 | `INSERT` | `INSERT INTO <table> VALUES (<v1>, <v2>, ...);` |
-| `SELECT` | `SELECT <*|cols> FROM <table> [WHERE <cond>];` |
-| `UPDATE` | Done | `UPDATE <table> SET col=val, ... WHERE <cond>;` |
-| `DELETE` | Done | `DELETE FROM <table> WHERE <cond>;` |
-| `ALTER` | Done | `ALTER TABLE <table> ADD\|DROP <col>;` |
-| `JOIN` | Done | `JOIN <t1> AND <t2> ON <c1> AND <c2>;` |
-| `ORDER BY` | Done | `SELECT ... FROM ... ORDER BY col [ASC\|DESC];` |
-| `GROUP BY` | Done | `SELECT col, AGG(col) FROM ... GROUP BY col;` |
-| Aggregates | Done | `COUNT(*)`, `SUM(col)`, `AVG(col)` |
+| `SELECT` | `SELECT [DISTINCT] <*\|cols> FROM <table> [WHERE <cond>] [GROUP BY <cols>] [ORDER BY <cols> [ASC\|DESC]] [LIMIT <n> [OFFSET <m>]];` |
+| `UPDATE` | `UPDATE <table> SET col=val, ... WHERE <cond>;` |
+| `DELETE` | `DELETE FROM <table> WHERE <cond>;` |
+| `ALTER` | `ALTER TABLE <table> ADD\|DROP <col>;` |
+| `JOIN` | `JOIN <t1> AND <t2> ON <c1> AND <c2>;` |
+| `LEFT JOIN` | `LEFT JOIN <t1> AND <t2> ON <c1> AND <c2>;` |
 
-All 15+ commands are fully implemented. Nested WHERE parenthesization, NULL handling (IS NULL/IS NOT NULL), multi-column ORDER BY and GROUP BY, DISTINCT, LIMIT/OFFSET, and LEFT JOIN are all supported. Every response begins with `[OK]` or `[ERROR]`.
+**SELECT features:**
+- `DISTINCT` — deduplicate result rows
+- `WHERE` — standard comparison operators (`==`, `!=`, `>`, `<`, `>=`, `<=`, `LIKE`), combined with `AND`/`OR`, full parenthesization support
+- `ORDER BY` — single or multi-column, `ASC`/`DESC` per column, numeric-aware sorting
+- `GROUP BY` — single or multi-column, with `COUNT(*)`, `SUM(col)`, `AVG(col)` aggregates
+- `LIMIT n [OFFSET m]` — pagination
+- `NULL` — full SQL semantics (`IS NULL`, `IS NOT NULL`; `col == NULL` returns false)
+
+**WHERE conditions** support `==`, `!=`, `>`, `<`, `>=`, `<=`, `LIKE` (with `%` wildcards), `IS NULL`, `IS NOT NULL`, combined with `AND`/`OR` and arbitrary parenthesization. Numeric and string comparison with automatic type detection.
+
+All commands return either `[OK]` or `[ERROR]` on the first line.
 
 ### Why This SQL Dialect
 
@@ -80,15 +88,6 @@ This engine uses a custom SQL-like syntax, not ANSI SQL. The design choices are 
 
 The parser handles standard SQL-isms like semicolons, quoted values, and case-insensitive keywords, so the surface feels familiar even where the underlying syntax diverges.
 
-### WHERE Conditions
-
-Supports `==`, `!=`, `>`, `<`, `>=`, `<=`, `LIKE` (with `%` wildcards), combined with `AND`/`OR`. Numeric and string comparison with automatic type detection.
-
-```sql
-SELECT * FROM marks WHERE mark >= 60 AND pass == TRUE;
-SELECT name FROM users WHERE name LIKE 'S%';
-```
-
 ## Quickstart
 
 ### Prerequisites
@@ -98,7 +97,7 @@ SELECT name FROM users WHERE name LIKE 'S%';
 ### Build and Test
 ```bash
 ./mvnw compile
-./mvnw test
+./mvnw test        # 66 tests, all passing
 ```
 
 ### Run the Server
@@ -127,17 +126,69 @@ SQL:> INSERT INTO marks VALUES ('Bob', 74, 'B');
 [OK]
 SQL:> INSERT INTO marks VALUES ('Charlie', 55, 'C');
 [OK]
+SQL:> INSERT INTO marks VALUES ('Diana', 74, 'B');
+[OK]
+SQL:> INSERT INTO marks VALUES ('Eve', NULL, 'F');
+[OK]
 SQL:> SELECT * FROM marks;
 [OK]
 id      name    score   grade
 1       Alice   92      A
 2       Bob     74      B
 3       Charlie 55      C
-SQL:> SELECT name, score FROM marks WHERE score >= 70;
+4       Diana   74      B
+5       Eve             F
+SQL:> SELECT name, score FROM marks WHERE score >= 70 ORDER BY score DESC, name ASC;
 [OK]
 name    score
 Alice   92
 Bob     74
+Diana   74
+SQL:> SELECT grade, COUNT(*) FROM marks GROUP BY grade ORDER BY grade ASC;
+[OK]
+grade   COUNT(*)
+A       1
+B       2
+C       1
+F       1
+SQL:> SELECT DISTINCT score FROM marks WHERE score IS NOT NULL ORDER BY score ASC LIMIT 2;
+[OK]
+score
+55
+74
+SQL:> SELECT name FROM marks WHERE (grade == 'A' OR grade == 'B') AND score >= 80;
+[OK]
+name
+Alice
+```
+
+### Example with JOINs
+```
+SQL:> CREATE TABLE depts (code, dept_name);
+[OK]
+SQL:> INSERT INTO depts VALUES ('CS', 'Computer Science');
+[OK]
+SQL:> INSERT INTO depts VALUES ('MATH', 'Mathematics');
+[OK]
+SQL:> CREATE TABLE students (name, dept_code);
+[OK]
+SQL:> INSERT INTO students VALUES ('Alice', 'CS');
+[OK]
+SQL:> INSERT INTO students VALUES ('Bob', 'MATH');
+[OK]
+SQL:> INSERT INTO students VALUES ('Charlie', 'PHYSICS');
+[OK]
+SQL:> JOIN students AND depts ON dept_code AND code;
+[OK]
+id      students.name   students.dept_code      depts.dept_name
+1       Alice   CS      Computer Science
+2       Bob     MATH    Mathematics
+SQL:> LEFT JOIN students AND depts ON dept_code AND code;
+[OK]
+id      students.name   students.dept_code      depts.dept_name
+1       Alice   CS      Computer Science
+2       Bob     MATH    Mathematics
+3       Charlie PHYSICS
 ```
 
 ## Project Structure
@@ -158,6 +209,9 @@ src/test/java/db/engine/
 ├── ComprehensiveDBTests.java # Full command coverage (62 tests)
 ├── people.tab                # Test fixture
 └── sheds.tab                 # Test fixture (JOIN data)
+
+.github/workflows/
+└── ci.yml              # GitHub Actions: compile + test on push
 ```
 
 ## Response Protocol
@@ -166,21 +220,16 @@ Every command returns either `[OK]` or `[ERROR]` on the first line. Query result
 
 ## Known Limitations
 
-This is a deliberately minimal database engine focusing on core relational operations and SQL parsing. The following features standard in production SQL engines are intentionally out of scope:
+This is a deliberately minimal database engine. The following are intentionally out of scope:
 
-**Missing SQL features**
 - Subqueries and nested SELECT statements
-- RIGHT JOIN and FULL OUTER JOIN (LEFT JOIN is supported)
-- DISTINCT already implemented, but HAVING is still TODO
-- LIMIT/OFFSET already implemented
-- NULL-aware operations now supported — NULL is stored as a sentinel, IS NULL/IS NOT NULL work correctly
-- Multi-column ORDER BY and GROUP BY now supported
-- Index structures — queries are O(n) table scans
-- Multi-user: single synchronous connection at a time
+- RIGHT JOIN and FULL OUTER JOIN (INNER and LEFT JOIN are supported)
+- HAVING clause (WHERE can filter before grouping)
+- Index structures — all queries are O(n) table scans
+- Multi-user concurrency — single synchronous connection at a time
 - Transaction support (BEGIN/COMMIT/ROLLBACK)
 
-**Design tradeoffs**
+**Design tradeoffs:**
 - Integer IDs are monotonic with no reuse after deletes
-- Nested WHERE parenthesization now supported via recursive descent parser
 - File-based persistence prioritises human readability over I/O throughput
-- Column types are tracked but not enforced at insert time (all values stored as strings)
+- Column types are tracked (STRING, INTEGER, FLOAT, BOOLEAN) but not enforced at insert time — all values are stored as strings and coerced at comparison time

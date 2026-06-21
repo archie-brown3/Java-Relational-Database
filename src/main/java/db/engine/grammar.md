@@ -3,7 +3,7 @@
 ## Top-level command dispatch
 
 ```
-<command>      ::=  <use> | <create> | <drop> | <alter> | <insert> | <select> | <update> | <delete> | <join>
+<command>      ::=  <use> | <create> | <drop> | <alter> | <insert> | <select> | <update> | <delete> | <join> | <left-join>
 ```
 
 All commands must end with a semicolon (`;`).
@@ -48,18 +48,24 @@ DROP on the `id` column is rejected.
 ## SELECT
 
 ```
-<select>       ::=  "SELECT" <attributes> "FROM" <name>
+<select>       ::=  "SELECT" [ "DISTINCT" ] <attributes> "FROM" <name>
                    ["WHERE" <condition>]
-                   ["GROUP BY" <name>]
-                   ["ORDER BY" <name> ["ASC" | "DESC"]]
+                   ["GROUP BY" <name-list>]
+                   ["ORDER BY" <order-list>]
+                   ["LIMIT" <number> ["OFFSET" <number>]]
 <attributes>   ::=  "*" | <attribute-list>
-<attribute-list> ::= <aggregate> | <name> | <aggregate> "," <name> | <name> "," <aggregate>
+<attribute-list> ::= <aggregate> | <name> | <name> "," <attribute-list> | <aggregate> "," <name> | <name> "," <aggregate>
 <aggregate>    ::=  "COUNT(*)" | "SUM(" <name> ")" | "AVG(" <name> ")"
+<order-list>   ::=  <order-item> | <order-item> "," <order-list>
+<order-item>   ::=  <name> [ "ASC" | "DESC" ]
 ```
 
 - `ORDER BY` defaults to ASC when no direction is specified.
 - Numeric columns are compared numerically; text columns lexicographically.
 - `GROUP BY` requires an aggregate function in the SELECT clause.
+- Multi-column `GROUP BY` and `ORDER BY` are supported.
+- `LIMIT n OFFSET m` skips `m` rows then returns at most `n` rows.
+- `DISTINCT` deduplicates rows by all projected columns (including `id`).
 
 ## UPDATE
 
@@ -83,14 +89,15 @@ WHERE clause is mandatory (no unconditional deletes).
 
 ```
 <join>         ::=  "JOIN" <name> "AND" <name> "ON" <name> "AND" <name>
+<left-join>    ::=  "LEFT" "JOIN" <name> "AND" <name> "ON" <name> "AND" <name>
 ```
 
-Performs an inner join. Output columns are prefixed with their source table name (e.g., `users.name`, `orders.product`).
+`JOIN` performs an inner join — only rows with matching values on both sides appear. `LEFT JOIN` includes all rows from the left table; unmatched right-table values are empty. Output columns are prefixed with their source table name (e.g., `users.name`, `orders.product`).
 
 ## Conditions
 
 ```
-<condition>    ::=  <comparison> | <condition> "AND" <condition> | <condition> "OR" <condition> | <null-test>
+<condition>    ::=  <comparison> | <null-test> | "(" <condition> ")" | <condition> "AND" <condition> | <condition> "OR" <condition>
 <comparison>   ::=  <name> <operator> <value>
 <operator>     ::=  "==" | "!=" | ">" | "<" | ">=" | "<=" | "LIKE"
 <null-test>    ::=  <name> "IS NULL" | <name> "IS NOT NULL"
@@ -116,4 +123,4 @@ Performs an inner join. Output columns are prefixed with their source table name
 <number>       ::=  [0-9]+ [ "." [0-9]+ ]?
 ```
 
-Identifiers are case-insensitive. Database names are stored lowercase. Reserved keywords (USE, CREATE, DATABASE, TABLE, DROP, ALTER, ADD, INSERT, INTO, VALUES, SELECT, FROM, WHERE, UPDATE, SET, DELETE, JOIN, AND, ON, LIKE, TRUE, FALSE, NULL, ORDER, BY, ASC, DESC, GROUP, COUNT, SUM, AVG) cannot be used as identifiers.
+Identifiers are case-insensitive. Database names are stored lowercase. Reserved keywords (USE, CREATE, DATABASE, TABLE, DROP, ALTER, ADD, INSERT, INTO, VALUES, SELECT, DISTINCT, FROM, WHERE, UPDATE, SET, DELETE, JOIN, LEFT, AND, ON, LIKE, TRUE, FALSE, NULL, ORDER, BY, ASC, DESC, GROUP, COUNT, SUM, AVG, LIMIT, OFFSET, IS, NOT) cannot be used as identifiers.
