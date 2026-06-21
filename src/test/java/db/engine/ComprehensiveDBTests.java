@@ -660,6 +660,74 @@ public class ComprehensiveDBTests {
         assertTrue(r.startsWith("[ERROR]"), "Negative LIMIT should error: " + r);
     }
 
+    // ─── LEFT JOIN ───────────────────────────────────────────────────
+
+    @Test
+    public void testLeftJoinUnmatchedRows() {
+        String db = randomName();
+        sendCommandToServer("CREATE DATABASE " + db + ";");
+        sendCommandToServer("USE " + db + ";");
+        sendCommandToServer("CREATE TABLE users (name, dept_id);");
+        sendCommandToServer("INSERT INTO users VALUES ('Alice', '1');");
+        sendCommandToServer("INSERT INTO users VALUES ('Bob', '2');");
+        sendCommandToServer("INSERT INTO users VALUES ('Charlie', '3');");
+        sendCommandToServer("CREATE TABLE depts (dept_code, dept_name);");
+        sendCommandToServer("INSERT INTO depts VALUES ('1', 'Engineering');");
+        sendCommandToServer("INSERT INTO depts VALUES ('2', 'Sales');");
+        // depts has no dept_code=3, so Charlie should appear with blanks for dept columns
+        String r = sendCommandToServer("LEFT JOIN users AND depts ON dept_id AND dept_code;");
+        assertTrue(r.startsWith("[OK]"), "LEFT JOIN should return [OK]: " + r);
+        assertTrue(r.contains("Alice") && r.contains("Engineering"), "Alice should match Engineering: " + r);
+        assertTrue(r.contains("Bob") && r.contains("Sales"), "Bob should match Sales: " + r);
+        assertTrue(r.contains("Charlie"), "Charlie should appear (unmatched left row): " + r);
+    }
+
+    @Test
+    public void testLeftJoinAllMatch() {
+        String db = randomName();
+        sendCommandToServer("CREATE DATABASE " + db + ";");
+        sendCommandToServer("USE " + db + ";");
+        sendCommandToServer("CREATE TABLE a (x, y);");
+        sendCommandToServer("INSERT INTO a VALUES ('foo', '1');");
+        sendCommandToServer("INSERT INTO a VALUES ('bar', '2');");
+        sendCommandToServer("CREATE TABLE b (z, w);");
+        sendCommandToServer("INSERT INTO b VALUES ('1', 'baz');");
+        sendCommandToServer("INSERT INTO b VALUES ('2', 'qux');");
+        String r = sendCommandToServer("LEFT JOIN a AND b ON y AND z;");
+        assertTrue(r.startsWith("[OK]"), "LEFT JOIN all-match should return [OK]: " + r);
+        assertTrue(r.contains("baz") && r.contains("qux"), "Both joined values should appear: " + r);
+    }
+
+    @Test
+    public void testLeftJoinNoMatch() {
+        String db = randomName();
+        sendCommandToServer("CREATE DATABASE " + db + ";");
+        sendCommandToServer("USE " + db + ";");
+        sendCommandToServer("CREATE TABLE t1 (c1);");
+        sendCommandToServer("INSERT INTO t1 VALUES ('x');");
+        sendCommandToServer("CREATE TABLE t2 (c2);");
+        sendCommandToServer("INSERT INTO t2 VALUES ('y');");
+        String r = sendCommandToServer("LEFT JOIN t1 AND t2 ON c1 AND c2;");
+        assertTrue(r.startsWith("[OK]"), "LEFT JOIN no-match should return [OK]: " + r);
+        assertTrue(r.contains("x"), "x should appear from left table: " + r);
+    }
+
+    @Test
+    public void testJoinStillWorksAsInner() {
+        String db = randomName();
+        sendCommandToServer("CREATE DATABASE " + db + ";");
+        sendCommandToServer("USE " + db + ";");
+        sendCommandToServer("CREATE TABLE p (name, val);");
+        sendCommandToServer("INSERT INTO p VALUES ('A', '1');");
+        sendCommandToServer("INSERT INTO p VALUES ('B', '2');");
+        sendCommandToServer("CREATE TABLE q (num, label);");
+        sendCommandToServer("INSERT INTO q VALUES ('1', 'one');");
+        String r = sendCommandToServer("JOIN p AND q ON val AND num;");
+        assertTrue(r.startsWith("[OK]"), "Plain JOIN should still work: " + r);
+        assertTrue(r.contains("A") && r.contains("one"), "A should join with one: " + r);
+        assertFalse(r.contains("B"), "B should not appear (no match in inner join): " + r);
+    }
+
     private int countOccurrences(String haystack, String needle) {
         int count = 0;
         int idx = 0;

@@ -97,8 +97,16 @@ public class QueryExecutor {
                 // Ensure the database directory exists
                 new File(databaseFolder).mkdirs();
 
-                // Write header: id + each attribute
                 List<String> attributes = command.attributes();
+
+                // Reject 'id' as a column name — it conflicts with the auto-generated primary key
+                for (String attr : attributes) {
+                    if ("id".equalsIgnoreCase(attr)) {
+                        return "[ERROR] Cannot create column named 'id' — it is reserved for the primary key";
+                    }
+                }
+
+                // Write header: id + each attribute
                 List<String> header = new ArrayList<>();
                 header.add("id");
                 header.addAll(attributes);
@@ -598,6 +606,7 @@ public class QueryExecutor {
                 response.append(String.join("\t", outputColumns));
 
                 // Perform inner join
+                Set<Integer> matchedLeftIds = new HashSet<>();
                 for (Row leftRow : leftTable.getAllRows()) {
                     String leftValue = leftRow.get(leftCol);
                     if (leftValue == null) leftValue = "";
@@ -607,6 +616,7 @@ public class QueryExecutor {
                         if (rightValue == null) rightValue = "";
 
                         if (leftValue.equals(rightValue)) {
+                            matchedLeftIds.add(leftRow.getId());
                             response.append(System.lineSeparator());
                             response.append(leftRow.getId()).append("\t");
                             List<String> joinedValues = new ArrayList<>();
@@ -619,6 +629,27 @@ public class QueryExecutor {
                                 if ("id".equalsIgnoreCase(col)) continue;
                                 String val = rightRow.get(col);
                                 joinedValues.add(val != null ? val : "");
+                            }
+                            response.append(String.join("\t", joinedValues));
+                        }
+                    }
+                }
+
+                // LEFT JOIN: append unmatched left-table rows with blanks for right-table columns
+                if (command.leftJoin()) {
+                    for (Row leftRow : leftTable.getAllRows()) {
+                        if (!matchedLeftIds.contains(leftRow.getId())) {
+                            response.append(System.lineSeparator());
+                            response.append(leftRow.getId()).append("\t");
+                            List<String> joinedValues = new ArrayList<>();
+                            for (String col : leftColumns) {
+                                if ("id".equalsIgnoreCase(col)) continue;
+                                String val = leftRow.get(col);
+                                joinedValues.add(val != null ? val : "");
+                            }
+                            for (String col : rightColumns) {
+                                if ("id".equalsIgnoreCase(col)) continue;
+                                joinedValues.add("");
                             }
                             response.append(String.join("\t", joinedValues));
                         }

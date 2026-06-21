@@ -124,8 +124,7 @@ public class QueryParser {
         }
     }
 
-    public record JoinCommand(String leftTable, String rightTable, String leftAttribute, String rightAttribute)
-            implements Command {
+    public record JoinCommand(String leftTable, String rightTable, String leftAttribute, String rightAttribute, boolean leftJoin) implements Command {
         @Override
         public <R> R accept(CommandVisitor<R> visitor) {
             return visitor.visit(this);
@@ -146,7 +145,8 @@ public class QueryParser {
             case "SELECT" -> parseSelect(command);
             case "UPDATE" -> parseUpdate(command);
             case "DELETE" -> parseDelete(command);
-            case "JOIN" -> parseJoin(command);
+            case "JOIN" -> parseJoin(command, false);
+            case "LEFT" -> parseJoin(command, true);
             default -> throw new IllegalArgumentException("Unknown command type: " + keyword);
         };
     }
@@ -717,16 +717,17 @@ public class QueryParser {
         return new DeleteCommand(tableName, conditionRaw);
     }
 
-    private static Command parseJoin(String command) {
-        // Parse JOIN <Table1> AND <Table2> ON <Attr1> AND <Attr2>.
+    private static Command parseJoin(String command, boolean leftJoin) {
+        // Parse [LEFT] JOIN <Table1> AND <Table2> ON <Attr1> AND <Attr2>.
         String trimmed = command.trim();
         String upper = trimmed.toUpperCase();
 
-        if (!upper.startsWith("JOIN ")) {
-            throw new IllegalArgumentException("Invalid JOIN syntax. Expected: JOIN <table1> AND <table2> ON <attr1> AND <attr2>");
+        String prefix = leftJoin ? "LEFT JOIN " : "JOIN ";
+        if (!upper.startsWith(prefix)) {
+            throw new IllegalArgumentException("Invalid JOIN syntax. Expected: " + prefix.trim() + " <table1> AND <table2> ON <attr1> AND <attr2>");
         }
 
-        String rest = trimmed.substring("JOIN ".length()).trim();
+        String rest = trimmed.substring(prefix.length()).trim();
 
         int andIndex = rest.toUpperCase().indexOf(" AND ");
         if (andIndex < 0) {
@@ -760,6 +761,6 @@ public class QueryParser {
         String leftAttribute = validateIdentifier(onParts[0].trim(), "attribute");
         String rightAttribute = validateIdentifier(onParts[1].trim(), "attribute");
 
-        return new JoinCommand(leftTable, rightTable, leftAttribute, rightAttribute);
+        return new JoinCommand(leftTable, rightTable, leftAttribute, rightAttribute, leftJoin);
     }
 }
