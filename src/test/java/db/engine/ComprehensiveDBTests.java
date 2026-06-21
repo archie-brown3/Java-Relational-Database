@@ -939,4 +939,64 @@ public class ComprehensiveDBTests {
         assertTrue(r.contains("150"), "A/Q1 SUM should be 150: " + r);
         assertTrue(r.contains("200"), "A/Q2 SUM should be 200: " + r);
     }
+
+    // ─── NESTED WHERE PARENTHESIZATION ────────────────────────────────
+
+    @Test
+    public void testNestedWhereOrWithAnd() {
+        String db = randomName();
+        sendCommandToServer("CREATE DATABASE " + db + ";");
+        sendCommandToServer("USE " + db + ";");
+        sendCommandToServer("CREATE TABLE t (a, b);");
+        sendCommandToServer("INSERT INTO t VALUES ('1', 'x');");
+        sendCommandToServer("INSERT INTO t VALUES ('2', 'y');");
+        sendCommandToServer("INSERT INTO t VALUES ('3', 'x');");
+        // (a == 1 OR a == 2) AND b == x — only row 1 matches (a=1,b=x)
+        String r = sendCommandToServer("SELECT * FROM t WHERE (a == '1' OR a == '2') AND b == 'x';");
+        assertTrue(r.startsWith("[OK]"), "Parenthesized WHERE should return [OK]: " + r);
+        assertTrue(r.contains("1") && r.contains("x"), "Row (1,x) should match: " + r);
+        assertFalse(r.contains("2"), "Row (2,y) should NOT match (b!=x): " + r);
+        assertFalse(r.contains("3"), "Row (3,x) should NOT match (a not 1 or 2): " + r);
+    }
+
+    @Test
+    public void testNestedWhereAndWithOr() {
+        String db = randomName();
+        sendCommandToServer("CREATE DATABASE " + db + ";");
+        sendCommandToServer("USE " + db + ";");
+        sendCommandToServer("CREATE TABLE t (a, b);");
+        sendCommandToServer("INSERT INTO t VALUES ('1', 'y');");
+        sendCommandToServer("INSERT INTO t VALUES ('2', 'x');");
+        sendCommandToServer("INSERT INTO t VALUES ('3', 'y');");
+        // a == 2 OR (a == 1 AND b == y) — rows 1 and 2 should match
+        String r = sendCommandToServer("SELECT * FROM t WHERE a == '2' OR (a == '1' AND b == 'y');");
+        assertTrue(r.startsWith("[OK]"), "Parenthesized WHERE should return [OK]: " + r);
+        assertTrue(r.contains("1") && r.contains("y"), "Row (1,y) should match: " + r);
+        assertTrue(r.contains("2"), "Row (2,x) should match: " + r);
+        assertFalse(r.contains("3"), "Row (3,y) should NOT match: " + r);
+    }
+
+    @Test
+    public void testNestedWhereDeepParentheses() {
+        String db = randomName();
+        sendCommandToServer("CREATE DATABASE " + db + ";");
+        sendCommandToServer("USE " + db + ";");
+        sendCommandToServer("CREATE TABLE t (x);");
+        sendCommandToServer("INSERT INTO t VALUES ('1');");
+        // ((x == '1')) — triple-nested, same as x == '1'
+        String r = sendCommandToServer("SELECT * FROM t WHERE (((x == '1')));");
+        assertTrue(r.startsWith("[OK]"), "Deeply nested parentheses should return [OK]: " + r);
+        assertTrue(r.contains("1"), "Row 1 should still match: " + r);
+    }
+
+    @Test
+    public void testNestedWhereUnmatchedParens() {
+        String db = randomName();
+        sendCommandToServer("CREATE DATABASE " + db + ";");
+        sendCommandToServer("USE " + db + ";");
+        sendCommandToServer("CREATE TABLE t (x);");
+        sendCommandToServer("INSERT INTO t VALUES ('1');");
+        String r = sendCommandToServer("SELECT * FROM t WHERE (x == '1';");
+        assertTrue(r.startsWith("[ERROR]"), "Unmatched parenthesis should error: " + r);
+    }
 }

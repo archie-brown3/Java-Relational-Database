@@ -729,27 +729,85 @@ public class QueryExecutor {
 
             String condition = rawCondition.trim();
 
-            String[] orParts = condition.split("(?i)\\s+OR\\s+");
-            if (orParts.length > 1) {
-                for (String part : orParts) {
-                    if (matchesRawCondition(table, row, part)) {
-                        return true;
+            // Validate balanced parentheses
+            int parenDepth = 0;
+            for (int i = 0; i < condition.length(); i++) {
+                char c = condition.charAt(i);
+                if (c == '(') parenDepth++;
+                else if (c == ')') parenDepth--;
+                if (parenDepth < 0) throw new IllegalArgumentException("Unmatched closing parenthesis in WHERE condition");
+            }
+            if (parenDepth != 0) throw new IllegalArgumentException("Unmatched opening parenthesis in WHERE condition");
+
+            // Strip outer matching parentheses
+            while (condition.startsWith("(") && condition.endsWith(")")) {
+                // Verify the opening and closing parens match (not like "(a) OR (b)")
+                int depth = 0;
+                boolean matched = true;
+                for (int i = 0; i < condition.length(); i++) {
+                    char c = condition.charAt(i);
+                    if (c == '(') depth++;
+                    else if (c == ')') depth--;
+                    if (depth == 0 && i < condition.length() - 1) {
+                        matched = false;
+                        break;
                     }
                 }
-                return false;
+                if (matched && depth == 0) {
+                    condition = condition.substring(1, condition.length() - 1).trim();
+                } else {
+                    break;
+                }
             }
 
-            String[] andParts = condition.split("(?i)\\s+AND\\s+");
-            if (andParts.length > 1) {
-                for (String part : andParts) {
-                    if (!matchesRawCondition(table, row, part)) {
-                        return false;
-                    }
-                }
-                return true;
+            // Find top-level OR split (outside any parentheses)
+            int splitPos = findTopLevelSplit(condition, "OR");
+            if (splitPos >= 0) {
+                String left = condition.substring(0, splitPos).trim();
+                String right = condition.substring(splitPos + "OR".length()).trim();
+                return matchesRawCondition(table, row, left) || matchesRawCondition(table, row, right);
+            }
+
+            // Find top-level AND split (outside any parentheses)
+            splitPos = findTopLevelSplit(condition, "AND");
+            if (splitPos >= 0) {
+                String left = condition.substring(0, splitPos).trim();
+                String right = condition.substring(splitPos + "AND".length()).trim();
+                return matchesRawCondition(table, row, left) && matchesRawCondition(table, row, right);
             }
 
             return evaluateSingleCondition(table, row, condition);
+        }
+
+        private int findTopLevelSplit(String condition, String operator) {
+            String upper = condition.toUpperCase();
+            int depth = 0;
+            int i = 0;
+            while (i < upper.length()) {
+                char c = condition.charAt(i);
+                if (c == '(') {
+                    depth++;
+                    i++;
+                } else if (c == ')') {
+                    depth--;
+                    i++;
+                } else if (depth == 0 && i > 0 && i + operator.length() <= upper.length()) {
+                    // Check for operator with word boundaries
+                    String sub = upper.substring(i, i + operator.length());
+                    if (sub.equals(operator)) {
+                        boolean leftBoundary = i == 0 || !Character.isLetterOrDigit(condition.charAt(i - 1));
+                        boolean rightBoundary = i + operator.length() >= upper.length()
+                            || !Character.isLetterOrDigit(condition.charAt(i + operator.length()));
+                        if (leftBoundary && rightBoundary) {
+                            return i;
+                        }
+                    }
+                    i++;
+                } else {
+                    i++;
+                }
+            }
+            return -1;
         }
 
         private boolean evaluateSingleCondition(Table table, Row row, String condition) {
