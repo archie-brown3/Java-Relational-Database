@@ -59,12 +59,26 @@ A relational database engine built from scratch in Java 17. Parses a custom SQL 
 | `DROP TABLE` | `DROP TABLE <name>;` |
 | `INSERT` | `INSERT INTO <table> VALUES (<v1>, <v2>, ...);` |
 | `SELECT` | `SELECT <*|cols> FROM <table> [WHERE <cond>];` |
-| `UPDATE` | `UPDATE <table> SET <col>=<val> WHERE <cond>;` |
-| `DELETE` | `DELETE FROM <table> WHERE <cond>;` |
-| `JOIN` | `JOIN <t1> AND <t2> ON <attr1> AND <attr2>;` |
-| `ALTER` | `ALTER TABLE <name> ADD|DROP <attribute>;` |
+| `UPDATE` | Done | `UPDATE <table> SET col=val, ... WHERE <cond>;` |
+| `DELETE` | Done | `DELETE FROM <table> WHERE <cond>;` |
+| `ALTER` | Done | `ALTER TABLE <table> ADD\|DROP <col>;` |
+| `JOIN` | Done | `JOIN <t1> AND <t2> ON <c1> AND <c2>;` |
+| `ORDER BY` | Done | `SELECT ... FROM ... ORDER BY col [ASC\|DESC];` |
+| `GROUP BY` | Done | `SELECT col, AGG(col) FROM ... GROUP BY col;` |
+| Aggregates | Done | `COUNT(*)`, `SUM(col)`, `AVG(col)` |
 
-All 11 commands are fully implemented. Every response begins with `[OK]` or `[ERROR]`.
+All 11 commands plus ORDER BY and GROUP BY aggregations are fully implemented. Every response begins with `[OK]` or `[ERROR]`.
+
+### Why This SQL Dialect
+
+This engine uses a custom SQL-like syntax, not ANSI SQL. The design choices are intentional:
+
+- **`==` for equality** rather than `=` — avoids ambiguity with assignment in the SET clause
+- **`USE <database>;`** as an explicit connection state mechanism — simpler than connection strings for a single-user engine
+- **File-based storage** in `.tab` files — each table is one TSV file, making data trivially inspectable with any text editor
+- **`[OK]`/`[ERROR]` protocol** — a predictable, parseable response format that any TCP client can consume without a stateful protocol parser
+
+The parser handles standard SQL-isms like semicolons, quoted values, and case-insensitive keywords, so the surface feels familiar even where the underlying syntax diverges.
 
 ### WHERE Conditions
 
@@ -136,12 +150,12 @@ src/main/java/db/engine/
 ├── QueryExecutor.java  # Visitor pattern execution engine
 ├── Table.java          # In-memory table representation
 ├── Row.java            # Row (id + column-value map)
-├── Column.java         # Column metadata (name, type, FK refs)
+├── Column.java         # Column metadata (name, type)
 └── grammar.md          # BNF grammar specification
 
 src/test/java/db/engine/
 ├── ExampleDBTests.java       # Integration tests
-├── ComprehensiveDBTests.java # Full command coverage (28 tests)
+├── ComprehensiveDBTests.java # Full command coverage (35 tests)
 ├── people.tab                # Test fixture
 └── sheds.tab                 # Test fixture (JOIN data)
 ```
@@ -152,8 +166,20 @@ Every command returns either `[OK]` or `[ERROR]` on the first line. Query result
 
 ## Known Limitations
 
-- No index structures: queries are O(n) table scans
-- Single-user: one connection at a time
+This is a deliberately minimal database engine focusing on core relational operations and SQL parsing. The following features standard in production SQL engines are intentionally out of scope:
+
+**Missing SQL features**
+- Subqueries and nested SELECT statements
+- Multiple JOIN types (LEFT, RIGHT, OUTER) — only INNER JOIN
+- DISTINCT, LIMIT/OFFSET, HAVING
+- NULL-aware operations (NULL is treated as an empty string)
+- Multi-column ORDER BY and GROUP BY
+- Index structures — queries are O(n) table scans
+- Multi-user: single synchronous connection at a time
+- Transaction support (BEGIN/COMMIT/ROLLBACK)
+
+**Design tradeoffs**
 - Integer IDs are monotonic with no reuse after deletes
 - No nested WHERE parenthesization (AND/OR are left-associative)
-- JOIN supports single-column inner joins only
+- File-based persistence prioritises human readability over I/O throughput
+- Column types are tracked but not enforced at insert time (all values stored as strings)
